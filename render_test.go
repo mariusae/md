@@ -123,8 +123,14 @@ func TestLink(t *testing.T) {
 	if !strings.Contains(out, "click here") {
 		t.Error("link text missing")
 	}
-	if !strings.Contains(out, "(https://example.com)") {
-		t.Error("link URL should appear in parentheses")
+	if !strings.Contains(out, "https://example.com") {
+		t.Error("link URL missing")
+	}
+	if !strings.Contains(out, FgBlue) {
+		t.Error("link should be rendered in blue")
+	}
+	if !strings.Contains(out, Underline) {
+		t.Error("link URL should be underlined")
 	}
 }
 

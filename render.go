@@ -12,9 +12,10 @@ import (
 )
 
 type style struct {
-	bold   bool
-	italic bool
-	color  string
+	bold      bool
+	italic    bool
+	underline bool
+	color     string
 }
 
 type AnsiRenderer struct {
@@ -45,7 +46,7 @@ func (r *AnsiRenderer) popStyle(w util.BufWriter) {
 }
 
 func (r *AnsiRenderer) applyCurrentStyle(w util.BufWriter) {
-	var bold, italic bool
+	var bold, italic, underline bool
 	var color string
 	for _, s := range r.styles {
 		if s.bold {
@@ -53,6 +54,9 @@ func (r *AnsiRenderer) applyCurrentStyle(w util.BufWriter) {
 		}
 		if s.italic {
 			italic = true
+		}
+		if s.underline {
+			underline = true
 		}
 		if s.color != "" {
 			color = s.color
@@ -63,6 +67,9 @@ func (r *AnsiRenderer) applyCurrentStyle(w util.BufWriter) {
 	}
 	if italic {
 		w.WriteString(Italic)
+	}
+	if underline {
+		w.WriteString(Underline)
 	}
 	if color != "" {
 		w.WriteString(color)
@@ -382,9 +389,16 @@ func (r *AnsiRenderer) renderEmphasis(w util.BufWriter, source []byte, node ast.
 }
 
 func (r *AnsiRenderer) renderLink(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
-	if !entering {
+	if entering {
+		r.pushStyle(style{color: FgBlue}, w)
+	} else {
 		n := node.(*ast.Link)
-		r.writeWrapped(w, " ("+string(n.Destination)+")")
+		r.writeWrapped(w, " (")
+		r.pushStyle(style{underline: true}, w)
+		r.writeWrapped(w, string(n.Destination))
+		r.popStyle(w)
+		r.writeWrapped(w, ")")
+		r.popStyle(w)
 	}
 	return ast.WalkContinue, nil
 }
