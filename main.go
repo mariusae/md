@@ -20,8 +20,10 @@ func main() {
 	}
 
 	width := 80
+	isTTY := false
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
 		width = w
+		isTTY = true
 	}
 
 	md := goldmark.New(
@@ -29,7 +31,7 @@ func main() {
 		goldmark.WithRenderer(
 			renderer.NewRenderer(
 				renderer.WithNodeRenderers(
-					util.Prioritized(NewAnsiRenderer(width), 1),
+					util.Prioritized(NewAnsiRenderer(width, isTTY), 1),
 				),
 			),
 		),

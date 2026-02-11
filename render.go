@@ -26,10 +26,11 @@ type AnsiRenderer struct {
 	width        int   // terminal width for word wrapping
 	col          int   // current column position
 	indent       int   // current indentation level (in characters)
+	osc8         bool  // emit OSC-8 hyperlink sequences
 }
 
-func NewAnsiRenderer(width int) *AnsiRenderer {
-	return &AnsiRenderer{width: width}
+func NewAnsiRenderer(width int, osc8 bool) *AnsiRenderer {
+	return &AnsiRenderer{width: width, osc8: osc8}
 }
 
 func (r *AnsiRenderer) pushStyle(s style, w util.BufWriter) {
@@ -389,16 +390,26 @@ func (r *AnsiRenderer) renderEmphasis(w util.BufWriter, source []byte, node ast.
 }
 
 func (r *AnsiRenderer) renderLink(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	n := node.(*ast.Link)
 	if entering {
-		r.pushStyle(style{color: FgBlue}, w)
+		if r.osc8 {
+			w.WriteString(OSC8Start(string(n.Destination)))
+			r.pushStyle(style{color: FgBlue, underline: true}, w)
+		} else {
+			r.pushStyle(style{color: FgBlue}, w)
+		}
 	} else {
-		n := node.(*ast.Link)
-		r.writeWrapped(w, " (")
-		r.pushStyle(style{underline: true}, w)
-		r.writeWrapped(w, string(n.Destination))
-		r.popStyle(w)
-		r.writeWrapped(w, ")")
-		r.popStyle(w)
+		if r.osc8 {
+			r.popStyle(w)
+			w.WriteString(OSC8End)
+		} else {
+			r.writeWrapped(w, " (")
+			r.pushStyle(style{underline: true}, w)
+			r.writeWrapped(w, string(n.Destination))
+			r.popStyle(w)
+			r.writeWrapped(w, ")")
+			r.popStyle(w)
+		}
 	}
 	return ast.WalkContinue, nil
 }
@@ -406,7 +417,16 @@ func (r *AnsiRenderer) renderLink(w util.BufWriter, source []byte, node ast.Node
 func (r *AnsiRenderer) renderAutoLink(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
 		n := node.(*ast.AutoLink)
-		r.writeWrapped(w, string(n.URL(source)))
+		url := string(n.URL(source))
+		if r.osc8 {
+			w.WriteString(OSC8Start(url))
+			r.pushStyle(style{color: FgBlue, underline: true}, w)
+			r.writeWrapped(w, url)
+			r.popStyle(w)
+			w.WriteString(OSC8End)
+		} else {
+			r.writeWrapped(w, url)
+		}
 	}
 	return ast.WalkContinue, nil
 }

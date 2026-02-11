@@ -11,20 +11,24 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
-func render(markdown string) string {
+func renderOpts(markdown string, width int, osc8 bool) string {
 	var buf bytes.Buffer
 	md := goldmark.New(
 		goldmark.WithExtensions(extension.GFM),
 		goldmark.WithRenderer(
 			renderer.NewRenderer(
 				renderer.WithNodeRenderers(
-					util.Prioritized(NewAnsiRenderer(80), 1),
+					util.Prioritized(NewAnsiRenderer(width, osc8), 1),
 				),
 			),
 		),
 	)
 	md.Convert([]byte(markdown), &buf)
 	return buf.String()
+}
+
+func render(markdown string) string {
+	return renderOpts(markdown, 80, false)
 }
 
 func TestHeadingBold(t *testing.T) {
@@ -156,22 +160,50 @@ func TestNestedEmphasisInHeading(t *testing.T) {
 }
 
 func TestWordWrapping(t *testing.T) {
-	// Create a renderer with narrow width
-	var buf bytes.Buffer
-	md := goldmark.New(
-		goldmark.WithExtensions(extension.GFM),
-		goldmark.WithRenderer(
-			renderer.NewRenderer(
-				renderer.WithNodeRenderers(
-					util.Prioritized(NewAnsiRenderer(20), 1),
-				),
-			),
-		),
-	)
-	md.Convert([]byte("one two three four five six seven eight\n"), &buf)
-	out := buf.String()
+	out := renderOpts("one two three four five six seven eight\n", 20, false)
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) < 2 {
 		t.Errorf("expected word wrapping to produce multiple lines, got %d lines: %q", len(lines), out)
+	}
+}
+
+func TestLinkOSC8(t *testing.T) {
+	out := renderOpts("[click here](https://example.com)\n", 80, true)
+	if !strings.Contains(out, "click here") {
+		t.Error("link text missing")
+	}
+	if !strings.Contains(out, OSC8Start("https://example.com")) {
+		t.Error("OSC-8 start sequence missing")
+	}
+	if !strings.Contains(out, OSC8End) {
+		t.Error("OSC-8 end sequence missing")
+	}
+	if strings.Contains(out, " (https://example.com)") {
+		t.Error("OSC-8 link should not show URL in parentheses")
+	}
+	if !strings.Contains(out, Underline) {
+		t.Error("OSC-8 link text should be underlined")
+	}
+	if !strings.Contains(out, FgBlue) {
+		t.Error("OSC-8 link text should be blue")
+	}
+}
+
+func TestAutoLinkOSC8(t *testing.T) {
+	out := renderOpts("<https://example.com>\n", 80, true)
+	if !strings.Contains(out, "https://example.com") {
+		t.Error("autolink URL missing")
+	}
+	if !strings.Contains(out, OSC8Start("https://example.com")) {
+		t.Error("OSC-8 start sequence missing")
+	}
+	if !strings.Contains(out, OSC8End) {
+		t.Error("OSC-8 end sequence missing")
+	}
+	if !strings.Contains(out, Underline) {
+		t.Error("OSC-8 autolink should be underlined")
+	}
+	if !strings.Contains(out, FgBlue) {
+		t.Error("OSC-8 autolink should be blue")
 	}
 }
