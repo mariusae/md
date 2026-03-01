@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"md"
+	"github.com/mariusae/md"
 
 	"golang.org/x/term"
 )
