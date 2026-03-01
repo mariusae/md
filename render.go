@@ -1,15 +1,34 @@
-package main
+package md
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"unicode"
 
+	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
 	east "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/util"
 )
+
+// Render converts markdown source to ANSI-formatted text written to w.
+// width is the terminal width for word wrapping; osc8 enables OSC-8 hyperlinks.
+func Render(source []byte, w io.Writer, width int, osc8 bool) error {
+	gm := goldmark.New(
+		goldmark.WithExtensions(extension.GFM),
+		goldmark.WithRenderer(
+			renderer.NewRenderer(
+				renderer.WithNodeRenderers(
+					util.Prioritized(NewAnsiRenderer(width, osc8), 1),
+				),
+			),
+		),
+	)
+	return gm.Convert(source, w)
+}
 
 type style struct {
 	bold      bool

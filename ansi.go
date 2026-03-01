@@ -1,4 +1,4 @@
-package main
+package md
 
 const (
 	Reset     = "\033[0m"

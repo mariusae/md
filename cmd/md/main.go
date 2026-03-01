@@ -5,10 +5,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/renderer"
-	"github.com/yuin/goldmark/util"
+	"md"
+
 	"golang.org/x/term"
 )
 
@@ -26,18 +24,7 @@ func main() {
 		isTTY = true
 	}
 
-	md := goldmark.New(
-		goldmark.WithExtensions(extension.GFM),
-		goldmark.WithRenderer(
-			renderer.NewRenderer(
-				renderer.WithNodeRenderers(
-					util.Prioritized(NewAnsiRenderer(width, isTTY), 1),
-				),
-			),
-		),
-	)
-
-	if err := md.Convert(source, os.Stdout); err != nil {
+	if err := md.Render(source, os.Stdout, width, isTTY); err != nil {
 		fmt.Fprintf(os.Stderr, "md: %v\n", err)
 		os.Exit(1)
 	}

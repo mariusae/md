@@ -1,29 +1,14 @@
-package main
+package md
 
 import (
 	"bytes"
 	"strings"
 	"testing"
-
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/renderer"
-	"github.com/yuin/goldmark/util"
 )
 
 func renderOpts(markdown string, width int, osc8 bool) string {
 	var buf bytes.Buffer
-	md := goldmark.New(
-		goldmark.WithExtensions(extension.GFM),
-		goldmark.WithRenderer(
-			renderer.NewRenderer(
-				renderer.WithNodeRenderers(
-					util.Prioritized(NewAnsiRenderer(width, osc8), 1),
-				),
-			),
-		),
-	)
-	md.Convert([]byte(markdown), &buf)
+	Render([]byte(markdown), &buf, width, osc8)
 	return buf.String()
 }
 
