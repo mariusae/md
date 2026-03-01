@@ -1,4 +1,4 @@
-module md
+module github.com/mariusae/md
 
 go 1.24.7
 
