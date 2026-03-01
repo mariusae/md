@@ -174,6 +174,32 @@ func TestLinkOSC8(t *testing.T) {
 	}
 }
 
+func TestTaskCheckBoxUnchecked(t *testing.T) {
+	out := render("- [ ] todo item\n")
+	if !strings.Contains(out, "\u2610") {
+		t.Error("unchecked checkbox should use ☐ character")
+	}
+	if !strings.Contains(out, "todo item") {
+		t.Error("checkbox text missing")
+	}
+	if strings.Contains(out, "<input") {
+		t.Error("checkbox should not render as HTML input")
+	}
+}
+
+func TestTaskCheckBoxChecked(t *testing.T) {
+	out := render("- [x] done item\n")
+	if !strings.Contains(out, "\u2611") {
+		t.Error("checked checkbox should use ☑ character")
+	}
+	if !strings.Contains(out, "done item") {
+		t.Error("checkbox text missing")
+	}
+	if strings.Contains(out, "<input") {
+		t.Error("checkbox should not render as HTML input")
+	}
+}
+
 func TestAutoLinkOSC8(t *testing.T) {
 	out := renderOpts("<https://example.com>\n", 80, true)
 	if !strings.Contains(out, "https://example.com") {

@@ -200,11 +200,12 @@ func (r *AnsiRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(ast.KindImage, r.renderImage)
 	reg.Register(ast.KindRawHTML, r.renderRawHTML)
 
-	// Table extension nodes
+	// Extension nodes
 	reg.Register(east.KindTable, r.renderTable)
 	reg.Register(east.KindTableHeader, r.renderTableHeader)
 	reg.Register(east.KindTableRow, r.renderTableRow)
 	reg.Register(east.KindTableCell, r.renderTableCell)
+	reg.Register(east.KindTaskCheckBox, r.renderTaskCheckBox)
 }
 
 func (r *AnsiRenderer) renderDocument(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
@@ -315,6 +316,18 @@ func (r *AnsiRenderer) renderListItem(w util.BufWriter, source []byte, node ast.
 			r.indent = 0
 		}
 		r.writeNewline(w)
+	}
+	return ast.WalkContinue, nil
+}
+
+func (r *AnsiRenderer) renderTaskCheckBox(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if entering {
+		n := node.(*east.TaskCheckBox)
+		if n.IsChecked {
+			r.writeWrapped(w, "\u2611 ") // ☑
+		} else {
+			r.writeWrapped(w, "\u2610 ") // ☐
+		}
 	}
 	return ast.WalkContinue, nil
 }
