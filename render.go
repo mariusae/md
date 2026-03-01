@@ -120,9 +120,11 @@ func (r *AnsiRenderer) writeWrapped(w util.BufWriter, text string) {
 
 		// If this word would exceed the line, wrap.
 		if r.col > r.indent && r.col+wlen > r.width {
+			w.WriteString(Reset)
 			w.WriteString("\n")
 			w.WriteString(strings.Repeat(" ", r.indent))
 			r.col = r.indent
+			r.applyCurrentStyle(w)
 			// Skip whitespace at the start of a wrapped line.
 			if isSpace {
 				continue
