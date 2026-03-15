@@ -200,6 +200,39 @@ func TestTaskCheckBoxChecked(t *testing.T) {
 	}
 }
 
+func TestBlockquote(t *testing.T) {
+	out := render("> hello world\n")
+	if !strings.Contains(out, "█") {
+		t.Error("blockquote should contain block bar character")
+	}
+	if !strings.Contains(out, "hello world") {
+		t.Error("blockquote text missing")
+	}
+	if !strings.Contains(out, Dim) {
+		t.Error("blockquote bar should be dimmed")
+	}
+}
+
+func TestBlockquoteWrapping(t *testing.T) {
+	out := renderOpts("> one two three four five six seven eight\n", 20, false)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for _, line := range lines {
+		if !strings.Contains(line, "█") {
+			t.Errorf("wrapped blockquote line should contain bar: %q", line)
+		}
+	}
+}
+
+func TestNestedBlockquote(t *testing.T) {
+	out := render("> > nested\n")
+	if strings.Count(out, "█") < 2 {
+		t.Error("nested blockquote should have two bar characters")
+	}
+	if !strings.Contains(out, "nested") {
+		t.Error("nested blockquote text missing")
+	}
+}
+
 func TestAutoLinkOSC8(t *testing.T) {
 	out := renderOpts("<https://example.com>\n", 80, true)
 	if !strings.Contains(out, "https://example.com") {

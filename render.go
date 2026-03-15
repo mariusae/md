@@ -41,11 +41,12 @@ type AnsiRenderer struct {
 	styles       []style
 	listDepth    int
 	orderedIndex []int
-	indentStack  []int // saved indent levels for nested lists
-	width        int   // terminal width for word wrapping
-	col          int   // current column position
-	indent       int   // current indentation level (in characters)
-	osc8         bool  // emit OSC-8 hyperlink sequences
+	indentStack     []int // saved indent levels for nested lists
+	width           int   // terminal width for word wrapping
+	col             int   // current column position
+	indent          int   // current indentation level (in characters)
+	blockquoteDepth int   // nesting depth of blockquotes
+	osc8            bool  // emit OSC-8 hyperlink sequences
 }
 
 func NewAnsiRenderer(width int, osc8 bool) *AnsiRenderer {
@@ -118,12 +119,18 @@ func (r *AnsiRenderer) writeWrapped(w util.BufWriter, text string) {
 
 		isSpace := len(word) > 0 && unicode.IsSpace([]rune(word)[0])
 
+		// Emit indent (with blockquote bars) at the start of a new line.
+		if r.col == 0 && r.indent > 0 {
+			r.writeIndent(w)
+			r.applyCurrentStyle(w)
+		}
+
 		// If this word would exceed the line, wrap.
 		if r.col > r.indent && r.col+wlen > r.width {
 			w.WriteString(Reset)
 			w.WriteString("\n")
-			w.WriteString(strings.Repeat(" ", r.indent))
-			r.col = r.indent
+			r.col = 0
+			r.writeIndent(w)
 			r.applyCurrentStyle(w)
 			// Skip whitespace at the start of a wrapped line.
 			if isSpace {
@@ -172,7 +179,18 @@ func (r *AnsiRenderer) writeNewline(w util.BufWriter) {
 }
 
 func (r *AnsiRenderer) writeIndent(w util.BufWriter) {
-	if r.indent > 0 {
+	if r.blockquoteDepth > 0 {
+		w.WriteString(Dim)
+		for i := 0; i < r.blockquoteDepth; i++ {
+			w.WriteString("█ ")
+		}
+		w.WriteString(Reset)
+		remaining := r.indent - r.blockquoteDepth*2
+		if remaining > 0 {
+			w.WriteString(strings.Repeat(" ", remaining))
+		}
+		r.col = r.indent
+	} else if r.indent > 0 {
 		w.WriteString(strings.Repeat(" ", r.indent))
 		r.col = r.indent
 	}
@@ -228,6 +246,9 @@ func (r *AnsiRenderer) renderHeading(w util.BufWriter, source []byte, node ast.N
 func (r *AnsiRenderer) renderParagraph(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if !entering {
 		r.writeNewline(w)
+		if r.blockquoteDepth > 0 && node.NextSibling() != nil {
+			r.writeIndent(w)
+		}
 		r.writeNewline(w)
 	}
 	return ast.WalkContinue, nil
@@ -265,8 +286,10 @@ func (r *AnsiRenderer) renderFencedCodeBlock(w util.BufWriter, source []byte, no
 
 func (r *AnsiRenderer) renderBlockquote(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
+		r.blockquoteDepth++
 		r.indent += 2
 	} else {
+		r.blockquoteDepth--
 		r.indent -= 2
 	}
 	return ast.WalkContinue, nil
