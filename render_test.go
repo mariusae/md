@@ -179,6 +179,9 @@ func TestTaskCheckBoxUnchecked(t *testing.T) {
 	if !strings.Contains(out, "\u2610") {
 		t.Error("unchecked checkbox should use ☐ character")
 	}
+	if strings.Contains(out, "\u2022") {
+		t.Error("task list item should not render a bullet marker")
+	}
 	if !strings.Contains(out, "todo item") {
 		t.Error("checkbox text missing")
 	}
@@ -191,6 +194,9 @@ func TestTaskCheckBoxChecked(t *testing.T) {
 	out := render("- [x] done item\n")
 	if !strings.Contains(out, "\u2611") {
 		t.Error("checked checkbox should use ☑ character")
+	}
+	if strings.Contains(out, "\u2022") {
+		t.Error("task list item should not render a bullet marker")
 	}
 	if !strings.Contains(out, "done item") {
 		t.Error("checkbox text missing")

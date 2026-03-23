@@ -38,9 +38,9 @@ type style struct {
 }
 
 type AnsiRenderer struct {
-	styles       []style
-	listDepth    int
-	orderedIndex []int
+	styles          []style
+	listDepth       int
+	orderedIndex    []int
 	indentStack     []int // saved indent levels for nested lists
 	width           int   // terminal width for word wrapping
 	col             int   // current column position
@@ -323,6 +323,9 @@ func (r *AnsiRenderer) renderListItem(w util.BufWriter, source []byte, node ast.
 		idx := r.orderedIndex[len(r.orderedIndex)-1]
 		if idx < 0 {
 			prefix := indent + "  \u2022 "
+			if isTaskListItem(node) {
+				prefix = indent + "    "
+			}
 			w.WriteString(prefix)
 			r.col = len([]rune(prefix))
 			r.indent = len([]rune(prefix))
@@ -353,8 +356,18 @@ func (r *AnsiRenderer) renderTaskCheckBox(w util.BufWriter, source []byte, node 
 		} else {
 			r.writeWrapped(w, "\u2610 ") // ☐
 		}
+		r.indent += 2
 	}
 	return ast.WalkContinue, nil
+}
+
+func isTaskListItem(node ast.Node) bool {
+	textBlock := node.FirstChild()
+	if textBlock == nil || textBlock.Kind() != ast.KindTextBlock {
+		return false
+	}
+	firstInline := textBlock.FirstChild()
+	return firstInline != nil && firstInline.Kind() == east.KindTaskCheckBox
 }
 
 func (r *AnsiRenderer) renderThematicBreak(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
