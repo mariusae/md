@@ -308,3 +308,8 @@ Unlike a pre-formatted code block, a code span indicates code within a
 normal paragraph. For example:
 
 Use the `printf()` function.
+
+### Checklists
+
+- [ ] unchecked
+- [x] checked
