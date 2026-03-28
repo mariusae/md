@@ -65,30 +65,30 @@ func (r *AnsiRenderer) renderTable(w util.BufWriter, source []byte, node ast.Nod
 		}
 	}
 
-	writeSeparator(w, widths)
+	r.writeSeparator(w, widths)
 	for i, row := range rows {
-		writeRow(w, row, widths, alignments)
+		r.writeRow(w, row, widths, alignments)
 		if i == headerIdx || i == len(rows)-1 {
-			writeSeparator(w, widths)
+			r.writeSeparator(w, widths)
 		}
 	}
-	w.WriteString("\n")
+	r.writeString(w, "\n")
 	r.col = 0
 
 	return ast.WalkSkipChildren, nil
 }
 
-func writeSeparator(w util.BufWriter, widths []int) {
-	w.WriteString("+")
+func (r *AnsiRenderer) writeSeparator(w util.BufWriter, widths []int) {
+	r.writeString(w, "+")
 	for _, cw := range widths {
-		w.WriteString(strings.Repeat("-", cw+2))
-		w.WriteString("+")
+		r.writeString(w, strings.Repeat("-", cw+2))
+		r.writeString(w, "+")
 	}
-	w.WriteString("\n")
+	r.writeString(w, "\n")
 }
 
-func writeRow(w util.BufWriter, row []string, widths []int, alignments []east.Alignment) {
-	w.WriteString("|")
+func (r *AnsiRenderer) writeRow(w util.BufWriter, row []string, widths []int, alignments []east.Alignment) {
+	r.writeString(w, "|")
 	for i, cw := range widths {
 		var cell string
 		if i < len(row) {
@@ -98,11 +98,11 @@ func writeRow(w util.BufWriter, row []string, widths []int, alignments []east.Al
 		if i < len(alignments) {
 			align = alignments[i]
 		}
-		w.WriteString(" ")
-		w.WriteString(alignCell(cell, cw, align))
-		w.WriteString(" |")
+		r.writeString(w, " ")
+		r.writeString(w, alignCell(cell, cw, align))
+		r.writeString(w, " |")
 	}
-	w.WriteString("\n")
+	r.writeString(w, "\n")
 }
 
 func alignCell(text string, width int, align east.Alignment) string {

@@ -6,6 +6,7 @@ const (
 	Italic    = "\033[3m"
 	Underline = "\033[4m"
 	Dim       = "\033[2m"
+	Reverse   = "\033[7m"
 
 	FgBlue = "\033[34m"
 

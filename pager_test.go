@@ -1,6 +1,10 @@
 package md
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestParseOSCColorRGB(t *testing.T) {
 	color, ok := parseOSCColor("rgb:ffff/8000/0000")
@@ -59,4 +63,441 @@ func TestWatchFilesWithoutPaths(t *testing.T) {
 		t.Fatal("expected nil error channel when no paths are watched")
 	}
 	closeFn()
+}
+
+func TestPromptControlUDeletesToStart(t *testing.T) {
+	p := &pager{
+		promptActive: true,
+		promptValue:  "alpha beta",
+		promptCursor: 6,
+	}
+
+	p.handlePromptKey(keyEvent{ch: 21})
+
+	if p.promptValue != "beta" {
+		t.Fatalf("promptValue = %q, want %q", p.promptValue, "beta")
+	}
+	if p.promptCursor != 0 {
+		t.Fatalf("promptCursor = %d, want 0", p.promptCursor)
+	}
+}
+
+func TestPromptControlKDeletesToEnd(t *testing.T) {
+	p := &pager{
+		promptActive: true,
+		promptValue:  "alpha beta",
+		promptCursor: 5,
+	}
+
+	p.handlePromptKey(keyEvent{ch: 11})
+
+	if p.promptValue != "alpha" {
+		t.Fatalf("promptValue = %q, want %q", p.promptValue, "alpha")
+	}
+	if p.promptCursor != 5 {
+		t.Fatalf("promptCursor = %d, want 5", p.promptCursor)
+	}
+}
+
+func TestPromptControlWDeletesPreviousWord(t *testing.T) {
+	p := &pager{
+		promptActive: true,
+		promptValue:  "alpha beta gamma",
+		promptCursor: len([]rune("alpha beta ")),
+	}
+
+	p.handlePromptKey(keyEvent{ch: 23})
+
+	if p.promptValue != "alpha gamma" {
+		t.Fatalf("promptValue = %q, want %q", p.promptValue, "alpha gamma")
+	}
+	if p.promptCursor != len([]rune("alpha ")) {
+		t.Fatalf("promptCursor = %d", p.promptCursor)
+	}
+}
+
+func TestPromptCursorMovementAndInsertion(t *testing.T) {
+	p := &pager{
+		promptActive: true,
+		promptValue:  "abef",
+		promptCursor: 2,
+	}
+
+	p.handlePromptKey(keyEvent{ch: 2})
+	p.handlePromptKey(keyEvent{kind: keyRune, ch: 'Z'})
+	p.handlePromptKey(keyEvent{ch: 6})
+	p.handlePromptKey(keyEvent{kind: keyRune, ch: 'Y'})
+
+	if p.promptValue != "aZbYef" {
+		t.Fatalf("promptValue = %q, want %q", p.promptValue, "aZbYef")
+	}
+	if p.promptCursor != 4 {
+		t.Fatalf("promptCursor = %d, want 4", p.promptCursor)
+	}
+}
+
+func TestPromptDisplayKeepsCursorVisible(t *testing.T) {
+	p := &pager{
+		width:        8,
+		promptValue:  "abcdefghij",
+		promptCursor: 9,
+	}
+
+	display, cursorCol := p.promptDisplay()
+
+	if display != "/cdefghi" {
+		t.Fatalf("display = %q, want %q", display, "/cdefghi")
+	}
+	if cursorCol != 8 {
+		t.Fatalf("cursorCol = %d, want 8", cursorCol)
+	}
+}
+
+func TestFindSearchMatches(t *testing.T) {
+	got := findSearchMatches("alpha beta alpha", "alpha")
+	want := []matchRange{{start: 0, end: 5}, {start: 11, end: 16}}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected match count: %d", len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("match %d = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestHighlightSearchMatchesPlain(t *testing.T) {
+	startSeq := "\033[48;2;1;2;3m\033[1m"
+	got := highlightSearchMatches("alpha beta alpha", "alpha beta alpha", "alpha", startSeq)
+	if strings.Count(got, startSeq) != 2 {
+		t.Fatalf("expected two highlighted matches, got %q", got)
+	}
+	if stripANSI(got) != "alpha beta alpha" {
+		t.Fatalf("stripANSI() = %q", stripANSI(got))
+	}
+}
+
+func TestHighlightSearchMatchesRestoresExistingStyles(t *testing.T) {
+	startSeq := "\033[48;2;1;2;3m\033[1m"
+	rendered := Bold + "alpha" + Reset + " beta"
+	got := highlightSearchMatches(rendered, "alpha beta", "alpha", startSeq)
+	if !strings.Contains(got, Bold+startSeq+"alpha"+Reset+Bold+Reset+" beta") {
+		t.Fatalf("highlighted output did not preserve style reset ordering: %q", got)
+	}
+}
+
+func TestHighlightSearchMatchesPreservesLinks(t *testing.T) {
+	startSeq := "\033[48;2;1;2;3m\033[1m"
+	rendered := OSC8Start("https://example.com") + FgBlue + Underline + "alpha" + Reset + OSC8End
+	got := highlightSearchMatches(rendered, "alpha", "alpha", startSeq)
+	if !strings.Contains(got, OSC8Start("https://example.com")) || !strings.Contains(got, OSC8End) {
+		t.Fatalf("expected OSC-8 escapes to be preserved: %q", got)
+	}
+	if !strings.Contains(got, startSeq) {
+		t.Fatalf("expected highlighted match: %q", got)
+	}
+}
+
+func TestHumanizeRelativeTime(t *testing.T) {
+	now := time.Date(2026, time.March, 28, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name string
+		then time.Time
+		want string
+	}{
+		{name: "just now", then: now.Add(-20 * time.Second), want: "just now"},
+		{name: "minutes", then: now.Add(-2 * time.Minute), want: "2m"},
+		{name: "hours", then: now.Add(-3 * time.Hour), want: "3h"},
+		{name: "yesterday", then: now.Add(-30 * time.Hour), want: "yesterday"},
+		{name: "days", then: now.Add(-6 * 24 * time.Hour), want: "6d"},
+		{name: "last month", then: now.Add(-45 * 24 * time.Hour), want: "last month"},
+		{name: "last year", then: now.Add(-400 * 24 * time.Hour), want: "last year"},
+		{name: "years", then: now.Add(-800 * 24 * time.Hour), want: "2y"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := humanizeRelativeTime(tt.then, now); got != tt.want {
+				t.Fatalf("humanizeRelativeTime() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractHeadings(t *testing.T) {
+	source := []byte("# One\n\n## Two\ntext\n")
+	headings, err := ExtractHeadings(source)
+	if err != nil {
+		t.Fatalf("ExtractHeadings() returned error: %v", err)
+	}
+	if len(headings) != 2 {
+		t.Fatalf("unexpected heading count: %d", len(headings))
+	}
+	if headings[0].Text != "One" || headings[0].Level != 1 {
+		t.Fatalf("unexpected heading[0]: %#v", headings[0])
+	}
+	if headings[1].Text != "Two" || headings[1].Level != 2 {
+		t.Fatalf("unexpected heading[1]: %#v", headings[1])
+	}
+}
+
+func TestOutlineRefreshSelectsCurrentHeading(t *testing.T) {
+	p := &pager{
+		topLine: 5,
+		headings: []Heading{
+			{Level: 1, Text: "One", Line: 0},
+			{Level: 2, Text: "Two", Line: 4},
+			{Level: 2, Text: "Three", Line: 9},
+		},
+		outline: outlineState{selected: -1},
+	}
+
+	p.refreshOutline()
+
+	if len(p.outline.filtered) != 3 {
+		t.Fatalf("unexpected filtered count: %d", len(p.outline.filtered))
+	}
+	if p.outline.selected != 1 {
+		t.Fatalf("outline.selected = %d, want 1", p.outline.selected)
+	}
+}
+
+func TestOutlineFilterNarrowsHeadings(t *testing.T) {
+	p := &pager{
+		headings: []Heading{
+			{Level: 1, Text: "Alpha", Line: 0},
+			{Level: 2, Text: "Beta", Line: 2},
+			{Level: 2, Text: "Alphabet", Line: 4},
+		},
+		outline: outlineState{
+			filter: "alp",
+			cursor: 3,
+		},
+	}
+
+	p.refreshOutline()
+
+	if len(p.outline.filtered) != 2 {
+		t.Fatalf("unexpected filtered count: %d", len(p.outline.filtered))
+	}
+	if p.outline.filtered[0] != 0 || p.outline.filtered[1] != 2 {
+		t.Fatalf("unexpected filtered values: %#v", p.outline.filtered)
+	}
+}
+
+func TestMoveOutlineSelectionNavigates(t *testing.T) {
+	p := &pager{
+		height: 8,
+		headings: []Heading{
+			{Level: 1, Text: "One", Line: 0},
+			{Level: 2, Text: "Two", Line: 4},
+			{Level: 2, Text: "Three", Line: 9},
+		},
+		outline: outlineState{
+			filtered: []int{0, 1, 2},
+			selected: 0,
+		},
+		lines: make([]string, 20),
+	}
+
+	p.moveOutlineSelection(1)
+
+	if p.outline.selected != 1 {
+		t.Fatalf("outline.selected = %d, want 1", p.outline.selected)
+	}
+	if p.topLine != 4 {
+		t.Fatalf("topLine = %d, want 4", p.topLine)
+	}
+}
+
+func TestOutlineEscapeClosesOverlay(t *testing.T) {
+	p := &pager{
+		outline: outlineState{
+			active:   true,
+			filter:   "alp",
+			selected: 1,
+			filtered: []int{1},
+		},
+	}
+
+	quit := p.handleOutlineKey(keyEvent{kind: keyEscape})
+
+	if quit {
+		t.Fatal("handleOutlineKey() should not quit on escape")
+	}
+	if p.outline.active {
+		t.Fatal("outline should be inactive after escape")
+	}
+}
+
+func TestRenderOutlineEntryUsesRowBackgroundForSelectionWhenTinted(t *testing.T) {
+	p := &pager{
+		theme: tintTheme{
+			highlightBG: "\033[48;2;1;2;3m",
+		},
+	}
+
+	got := p.renderOutlineEntry(Heading{Level: 2, Text: "Alpha"}, true, 20)
+
+	if strings.Contains(got, p.theme.highlightBG) {
+		t.Fatalf("selected outline entry should not embed highlight background when row tint is available: %q", got)
+	}
+	if !strings.Contains(got, Bold) {
+		t.Fatalf("selected outline entry should remain bold: %q", got)
+	}
+}
+
+func TestParseSGRMouseEventScrollUp(t *testing.T) {
+	ev, err := parseSGRMouseEvent("<64;12;5", 'M')
+	if err != nil {
+		t.Fatalf("parseSGRMouseEvent() returned error: %v", err)
+	}
+	mouse, ok := ev.(mouseEvent)
+	if !ok {
+		t.Fatalf("expected mouseEvent, got %#v", ev)
+	}
+	if mouse.kind != mouseScrollUp || mouse.col != 12 || mouse.row != 5 {
+		t.Fatalf("unexpected mouse event: %#v", mouse)
+	}
+}
+
+func TestHandleMouseScrollsPager(t *testing.T) {
+	p := &pager{
+		topLine: 10,
+		height:  8,
+		lines:   make([]string, 50),
+	}
+
+	p.handleMouse(mouseEvent{kind: mouseScrollDown, row: 1, col: 1})
+
+	if p.topLine != 13 {
+		t.Fatalf("topLine = %d, want 13", p.topLine)
+	}
+}
+
+func TestHandleMouseScrollsOutlineSelection(t *testing.T) {
+	p := &pager{
+		width:  40,
+		height: 12,
+		headings: []Heading{
+			{Level: 1, Text: "One", Line: 0},
+			{Level: 2, Text: "Two", Line: 4},
+			{Level: 2, Text: "Three", Line: 8},
+		},
+		lines: make([]string, 40),
+		outline: outlineState{
+			active:   true,
+			filtered: []int{0, 1, 2},
+			selected: 0,
+		},
+	}
+
+	top, _, _, _ := p.outlinePanelRect()
+	p.handleMouse(mouseEvent{kind: mouseScrollDown, row: top, col: 1})
+
+	if p.outline.selected != 1 {
+		t.Fatalf("outline.selected = %d, want 1", p.outline.selected)
+	}
+}
+
+func TestCurrentHeadingPath(t *testing.T) {
+	p := &pager{
+		topLine: 7,
+		headings: []Heading{
+			{Level: 1, Text: "One", Line: 0},
+			{Level: 2, Text: "Two", Line: 3},
+			{Level: 3, Text: "Three", Line: 6},
+			{Level: 2, Text: "Four", Line: 10},
+		},
+	}
+
+	got := p.currentHeadingPath()
+	if len(got) != 3 {
+		t.Fatalf("unexpected path length: %d", len(got))
+	}
+	if got[0].Text != "One" || got[1].Text != "Two" || got[2].Text != "Three" {
+		t.Fatalf("unexpected path: %#v", got)
+	}
+}
+
+func TestStatusSectionPath(t *testing.T) {
+	p := &pager{
+		cfg:     PagerConfig{Label: "test.md"},
+		topLine: 7,
+		headings: []Heading{
+			{Level: 1, Text: "One", Line: 0},
+			{Level: 2, Text: "Two", Line: 3},
+			{Level: 3, Text: "Three", Line: 6},
+		},
+	}
+
+	got := p.statusSectionPath()
+
+	if !strings.Contains(got, "test.md: One › Two › ") {
+		t.Fatalf("missing section path prefix: %q", got)
+	}
+	if !strings.Contains(got, Bold+"Three"+Reset) {
+		t.Fatalf("current section should be bold: %q", got)
+	}
+}
+
+func TestRenderStatusBarRightAlignsMetaAndOmitsLineNumbers(t *testing.T) {
+	oldTimeNow := timeNow
+	timeNow = func() time.Time {
+		return time.Date(2026, time.March, 28, 12, 0, 0, 0, time.UTC)
+	}
+	defer func() {
+		timeNow = oldTimeNow
+	}()
+
+	p := &pager{
+		width:         40,
+		height:        8,
+		topLine:       10,
+		sourceModTime: time.Date(2026, time.March, 28, 11, 58, 0, 0, time.UTC),
+		lines:         make([]string, 50),
+		cfg:           PagerConfig{Label: "test.md"},
+		headings: []Heading{
+			{Level: 1, Text: "One", Line: 0},
+			{Level: 2, Text: "Two", Line: 8},
+		},
+	}
+
+	got := stripANSI(p.renderStatusBar())
+
+	if strings.Contains(got, "/50") || strings.Contains(got, "11-") {
+		t.Fatalf("status bar should not contain line numbers: %q", got)
+	}
+	if !strings.HasSuffix(got, "2m  23%") {
+		t.Fatalf("status bar right side should be right aligned with mod time and percent, got %q", got)
+	}
+}
+
+func TestFitToWidthPreservesANSI(t *testing.T) {
+	input := "test.md: " + Bold + "VeryLongHeading" + Reset
+	got := fitToWidth(input, 15)
+	if visibleWidth(got) != 15 {
+		t.Fatalf("visibleWidth(fitToWidth(...)) = %d, want 15", visibleWidth(got))
+	}
+	if !strings.Contains(got, Bold) {
+		t.Fatalf("expected ANSI styling to be preserved: %q", got)
+	}
+	if !strings.HasSuffix(stripANSI(got), "...") {
+		t.Fatalf("expected ellipsis in truncated output: %q", stripANSI(got))
+	}
+}
+
+func TestRenderTintedBlockPadsStyledTextToFullWidth(t *testing.T) {
+	got := renderTintedBlock(Bold+"abc"+Reset, "", 5)
+	if stripANSI(got) != "abc  " {
+		t.Fatalf("stripANSI(renderTintedBlock(...)) = %q, want %q", stripANSI(got), "abc  ")
+	}
+}
+
+func TestRenderTintedBlockReappliesTintAfterInnerReset(t *testing.T) {
+	bg := "\033[48;2;1;2;3m"
+	got := renderTintedBlock(Bold+"abc"+Reset, bg, 5)
+	if !strings.Contains(got, Reset+bg+"  ") {
+		t.Fatalf("expected background to be restored before padding, got %q", got)
+	}
 }

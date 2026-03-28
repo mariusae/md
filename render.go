@@ -1,6 +1,7 @@
 package md
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -11,23 +12,73 @@ import (
 	"github.com/yuin/goldmark/extension"
 	east "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/renderer"
+	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 )
+
+type Heading struct {
+	Level int
+	Text  string
+	Line  int
+}
+
+type RenderResult struct {
+	Output   string
+	Headings []Heading
+}
 
 // Render converts markdown source to ANSI-formatted text written to w.
 // width is the terminal width for word wrapping; osc8 enables OSC-8 hyperlinks.
 func Render(source []byte, w io.Writer, width int, osc8 bool) error {
+	result, err := RenderDocument(source, width, osc8)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, result.Output)
+	return err
+}
+
+func RenderDocument(source []byte, width int, osc8 bool) (RenderResult, error) {
+	ansiRenderer := NewAnsiRenderer(width, osc8)
 	gm := goldmark.New(
 		goldmark.WithExtensions(extension.GFM),
 		goldmark.WithRenderer(
 			renderer.NewRenderer(
 				renderer.WithNodeRenderers(
-					util.Prioritized(NewAnsiRenderer(width, osc8), 1),
+					util.Prioritized(ansiRenderer, 1),
 				),
 			),
 		),
 	)
-	return gm.Convert(source, w)
+	var buf bytes.Buffer
+	if err := gm.Convert(source, &buf); err != nil {
+		return RenderResult{}, err
+	}
+	return RenderResult{
+		Output:   buf.String(),
+		Headings: append([]Heading(nil), ansiRenderer.headings...),
+	}, nil
+}
+
+func ExtractHeadings(source []byte) ([]Heading, error) {
+	gm := goldmark.New(goldmark.WithExtensions(extension.GFM))
+	doc := gm.Parser().Parse(text.NewReader(source))
+	var headings []Heading
+	if err := ast.Walk(doc, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering || node.Kind() != ast.KindHeading {
+			return ast.WalkContinue, nil
+		}
+		n := node.(*ast.Heading)
+		headings = append(headings, Heading{
+			Level: n.Level,
+			Text:  strings.TrimSpace(extractText(node, source)),
+			Line:  -1,
+		})
+		return ast.WalkContinue, nil
+	}); err != nil {
+		return nil, err
+	}
+	return headings, nil
 }
 
 type style struct {
@@ -42,11 +93,13 @@ type AnsiRenderer struct {
 	listDepth       int
 	orderedIndex    []int
 	indentStack     []int // saved indent levels for nested lists
-	width           int   // terminal width for word wrapping
-	col             int   // current column position
-	indent          int   // current indentation level (in characters)
-	blockquoteDepth int   // nesting depth of blockquotes
-	osc8            bool  // emit OSC-8 hyperlink sequences
+	line            int
+	width           int  // terminal width for word wrapping
+	col             int  // current column position
+	indent          int  // current indentation level (in characters)
+	blockquoteDepth int  // nesting depth of blockquotes
+	osc8            bool // emit OSC-8 hyperlink sequences
+	headings        []Heading
 }
 
 func NewAnsiRenderer(width int, osc8 bool) *AnsiRenderer {
@@ -62,7 +115,7 @@ func (r *AnsiRenderer) popStyle(w util.BufWriter) {
 	if len(r.styles) > 0 {
 		r.styles = r.styles[:len(r.styles)-1]
 	}
-	w.WriteString(Reset)
+	r.writeString(w, Reset)
 	r.applyCurrentStyle(w)
 }
 
@@ -84,16 +137,16 @@ func (r *AnsiRenderer) applyCurrentStyle(w util.BufWriter) {
 		}
 	}
 	if bold {
-		w.WriteString(Bold)
+		r.writeString(w, Bold)
 	}
 	if italic {
-		w.WriteString(Italic)
+		r.writeString(w, Italic)
 	}
 	if underline {
-		w.WriteString(Underline)
+		r.writeString(w, Underline)
 	}
 	if color != "" {
-		w.WriteString(color)
+		r.writeString(w, color)
 	}
 }
 
@@ -101,7 +154,7 @@ func (r *AnsiRenderer) applyCurrentStyle(w util.BufWriter) {
 // It respects the current indentation level and column position.
 func (r *AnsiRenderer) writeWrapped(w util.BufWriter, text string) {
 	if r.width <= 0 {
-		w.WriteString(text)
+		r.writeString(w, text)
 		return
 	}
 
@@ -127,8 +180,8 @@ func (r *AnsiRenderer) writeWrapped(w util.BufWriter, text string) {
 
 		// If this word would exceed the line, wrap.
 		if r.col > r.indent && r.col+wlen > r.width {
-			w.WriteString(Reset)
-			w.WriteString("\n")
+			r.writeString(w, Reset)
+			r.writeString(w, "\n")
 			r.col = 0
 			r.writeIndent(w)
 			r.applyCurrentStyle(w)
@@ -143,7 +196,7 @@ func (r *AnsiRenderer) writeWrapped(w util.BufWriter, text string) {
 			continue
 		}
 
-		w.WriteString(word)
+		r.writeString(w, word)
 		r.col += wlen
 	}
 }
@@ -174,26 +227,36 @@ func splitWords(text string) []string {
 }
 
 func (r *AnsiRenderer) writeNewline(w util.BufWriter) {
-	w.WriteString("\n")
+	r.writeString(w, "\n")
 	r.col = 0
 }
 
 func (r *AnsiRenderer) writeIndent(w util.BufWriter) {
 	if r.blockquoteDepth > 0 {
-		w.WriteString(Dim)
+		r.writeString(w, Dim)
 		for i := 0; i < r.blockquoteDepth; i++ {
-			w.WriteString("█ ")
+			r.writeString(w, "█ ")
 		}
-		w.WriteString(Reset)
+		r.writeString(w, Reset)
 		remaining := r.indent - r.blockquoteDepth*2
 		if remaining > 0 {
-			w.WriteString(strings.Repeat(" ", remaining))
+			r.writeString(w, strings.Repeat(" ", remaining))
 		}
 		r.col = r.indent
 	} else if r.indent > 0 {
-		w.WriteString(strings.Repeat(" ", r.indent))
+		r.writeString(w, strings.Repeat(" ", r.indent))
 		r.col = r.indent
 	}
+}
+
+func (r *AnsiRenderer) writeString(w util.BufWriter, s string) {
+	w.WriteString(s)
+	r.line += strings.Count(s, "\n")
+}
+
+func (r *AnsiRenderer) writeBytes(w util.BufWriter, b []byte) {
+	w.Write(b)
+	r.line += bytes.Count(b, []byte{'\n'})
 }
 
 func (r *AnsiRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
@@ -234,6 +297,12 @@ func (r *AnsiRenderer) renderDocument(w util.BufWriter, source []byte, node ast.
 
 func (r *AnsiRenderer) renderHeading(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
+		n := node.(*ast.Heading)
+		r.headings = append(r.headings, Heading{
+			Level: n.Level,
+			Text:  strings.TrimSpace(extractText(node, source)),
+			Line:  r.line,
+		})
 		r.pushStyle(style{bold: true}, w)
 	} else {
 		r.popStyle(w)
@@ -259,8 +328,8 @@ func (r *AnsiRenderer) renderCodeBlock(w util.BufWriter, source []byte, node ast
 		lines := node.Lines()
 		for i := 0; i < lines.Len(); i++ {
 			line := lines.At(i)
-			w.WriteString("    ")
-			w.Write(line.Value(source))
+			r.writeString(w, "    ")
+			r.writeBytes(w, line.Value(source))
 		}
 		r.writeNewline(w)
 		r.col = 0
@@ -274,8 +343,8 @@ func (r *AnsiRenderer) renderFencedCodeBlock(w util.BufWriter, source []byte, no
 		lines := node.Lines()
 		for i := 0; i < lines.Len(); i++ {
 			line := lines.At(i)
-			w.WriteString("    ")
-			w.Write(line.Value(source))
+			r.writeString(w, "    ")
+			r.writeBytes(w, line.Value(source))
 		}
 		r.writeNewline(w)
 		r.col = 0
@@ -326,12 +395,12 @@ func (r *AnsiRenderer) renderListItem(w util.BufWriter, source []byte, node ast.
 			if isTaskListItem(node) {
 				prefix = indent + "    "
 			}
-			w.WriteString(prefix)
+			r.writeString(w, prefix)
 			r.col = len([]rune(prefix))
 			r.indent = len([]rune(prefix))
 		} else {
 			prefix := fmt.Sprintf("%s  %d. ", indent, idx)
-			w.WriteString(prefix)
+			r.writeString(w, prefix)
 			r.col = len(prefix)
 			r.indent = len(prefix)
 			r.orderedIndex[len(r.orderedIndex)-1] = idx + 1
@@ -376,7 +445,7 @@ func (r *AnsiRenderer) renderThematicBreak(w util.BufWriter, source []byte, node
 		if hrWidth <= 0 {
 			hrWidth = 40
 		}
-		w.WriteString(strings.Repeat("\u2500", hrWidth))
+		r.writeString(w, strings.Repeat("\u2500", hrWidth))
 		r.writeNewline(w)
 		r.writeNewline(w)
 	}
@@ -388,7 +457,7 @@ func (r *AnsiRenderer) renderHTMLBlock(w util.BufWriter, source []byte, node ast
 		lines := node.Lines()
 		for i := 0; i < lines.Len(); i++ {
 			line := lines.At(i)
-			w.Write(line.Value(source))
+			r.writeBytes(w, line.Value(source))
 		}
 		return ast.WalkSkipChildren, nil
 	}
@@ -463,7 +532,7 @@ func (r *AnsiRenderer) renderLink(w util.BufWriter, source []byte, node ast.Node
 	n := node.(*ast.Link)
 	if entering {
 		if r.osc8 {
-			w.WriteString(OSC8Start(string(n.Destination)))
+			r.writeString(w, OSC8Start(string(n.Destination)))
 			r.pushStyle(style{color: FgBlue, underline: true}, w)
 		} else {
 			r.pushStyle(style{color: FgBlue}, w)
@@ -471,7 +540,7 @@ func (r *AnsiRenderer) renderLink(w util.BufWriter, source []byte, node ast.Node
 	} else {
 		if r.osc8 {
 			r.popStyle(w)
-			w.WriteString(OSC8End)
+			r.writeString(w, OSC8End)
 		} else {
 			r.writeWrapped(w, " (")
 			r.pushStyle(style{underline: true}, w)
@@ -489,11 +558,11 @@ func (r *AnsiRenderer) renderAutoLink(w util.BufWriter, source []byte, node ast.
 		n := node.(*ast.AutoLink)
 		url := string(n.URL(source))
 		if r.osc8 {
-			w.WriteString(OSC8Start(url))
+			r.writeString(w, OSC8Start(url))
 			r.pushStyle(style{color: FgBlue, underline: true}, w)
 			r.writeWrapped(w, url)
 			r.popStyle(w)
-			w.WriteString(OSC8End)
+			r.writeString(w, OSC8End)
 		} else {
 			r.writeWrapped(w, url)
 		}
@@ -503,9 +572,9 @@ func (r *AnsiRenderer) renderAutoLink(w util.BufWriter, source []byte, node ast.
 
 func (r *AnsiRenderer) renderImage(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
-		w.WriteString("[image: ")
+		r.writeString(w, "[image: ")
 	} else {
-		w.WriteString("]")
+		r.writeString(w, "]")
 	}
 	return ast.WalkContinue, nil
 }
@@ -515,7 +584,7 @@ func (r *AnsiRenderer) renderRawHTML(w util.BufWriter, source []byte, node ast.N
 		n := node.(*ast.RawHTML)
 		for i := 0; i < n.Segments.Len(); i++ {
 			seg := n.Segments.At(i)
-			w.Write(seg.Value(source))
+			r.writeBytes(w, seg.Value(source))
 		}
 		return ast.WalkSkipChildren, nil
 	}
