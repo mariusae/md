@@ -65,9 +65,11 @@ type pager struct {
 }
 
 type tintTheme struct {
-	statusBG    string
-	promptBG    string
-	highlightBG string
+	statusBG     string
+	promptBG     string
+	highlightBG  string
+	blockquoteBG string
+	markBG       string
 }
 
 type outlineState struct {
@@ -243,7 +245,13 @@ func (p *pager) handleEvent(ev inputEvent) (bool, error) {
 			p.requestBackground()
 		}
 	case bgColorEvent:
-		p.theme = deriveTintTheme(v.color)
+		nextTheme := deriveTintTheme(v.color)
+		if p.theme != nextTheme {
+			p.theme = nextTheme
+			if err := p.rebuild(); err != nil {
+				return false, err
+			}
+		}
 	case mouseEvent:
 		p.handleMouse(v)
 	case inputErrorEvent:
@@ -480,7 +488,7 @@ func (p *pager) loadSource() ([]byte, time.Time, error) {
 }
 
 func (p *pager) rebuild() error {
-	result, err := RenderDocument(p.source, p.width, true)
+	result, err := RenderDocumentWithStyle(p.source, p.width, true, p.theme.renderStyle())
 	if err != nil {
 		return err
 	}
@@ -1551,9 +1559,11 @@ func deriveTintTheme(bg rgbColor) tintTheme {
 	status := tintedBackground(bg, subtleTintAlpha(bg))
 	prompt := tintedBackground(bg, promptTintAlpha(bg))
 	return tintTheme{
-		statusBG:    status,
-		promptBG:    prompt,
-		highlightBG: prompt,
+		statusBG:     status,
+		promptBG:     prompt,
+		highlightBG:  prompt,
+		blockquoteBG: tintedBackground(bg, 0.16),
+		markBG:       prompt,
 	}
 }
 

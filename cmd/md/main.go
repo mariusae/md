@@ -51,7 +51,14 @@ func main() {
 		isTTY = true
 	}
 
-	if err := md.Render(source, os.Stdout, width, isTTY); err != nil {
+	renderStyle := md.RenderStyle{}
+	if isTTY {
+		if style, err := md.DetectRenderStyle(); err == nil {
+			renderStyle = style
+		}
+	}
+
+	if err := md.RenderWithStyle(source, os.Stdout, width, isTTY, renderStyle); err != nil {
 		fmt.Fprintf(os.Stderr, "md: %v\n", err)
 		os.Exit(1)
 	}

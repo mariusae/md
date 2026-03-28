@@ -30,7 +30,11 @@ type RenderResult struct {
 // Render converts markdown source to ANSI-formatted text written to w.
 // width is the terminal width for word wrapping; osc8 enables OSC-8 hyperlinks.
 func Render(source []byte, w io.Writer, width int, osc8 bool) error {
-	result, err := RenderDocument(source, width, osc8)
+	return RenderWithStyle(source, w, width, osc8, RenderStyle{})
+}
+
+func RenderWithStyle(source []byte, w io.Writer, width int, osc8 bool, style RenderStyle) error {
+	result, err := RenderDocumentWithStyle(source, width, osc8, style)
 	if err != nil {
 		return err
 	}
@@ -39,9 +43,13 @@ func Render(source []byte, w io.Writer, width int, osc8 bool) error {
 }
 
 func RenderDocument(source []byte, width int, osc8 bool) (RenderResult, error) {
-	ansiRenderer := NewAnsiRenderer(width, osc8)
+	return RenderDocumentWithStyle(source, width, osc8, RenderStyle{})
+}
+
+func RenderDocumentWithStyle(source []byte, width int, osc8 bool, style RenderStyle) (RenderResult, error) {
+	ansiRenderer := NewAnsiRenderer(width, osc8, style)
 	gm := goldmark.New(
-		goldmark.WithExtensions(extension.GFM),
+		goldmark.WithExtensions(extension.GFM, MarkExtension),
 		goldmark.WithRenderer(
 			renderer.NewRenderer(
 				renderer.WithNodeRenderers(
@@ -61,7 +69,7 @@ func RenderDocument(source []byte, width int, osc8 bool) (RenderResult, error) {
 }
 
 func ExtractHeadings(source []byte) ([]Heading, error) {
-	gm := goldmark.New(goldmark.WithExtensions(extension.GFM))
+	gm := goldmark.New(goldmark.WithExtensions(extension.GFM, MarkExtension))
 	doc := gm.Parser().Parse(text.NewReader(source))
 	var headings []Heading
 	if err := ast.Walk(doc, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
@@ -82,10 +90,11 @@ func ExtractHeadings(source []byte) ([]Heading, error) {
 }
 
 type style struct {
-	bold      bool
-	italic    bool
-	underline bool
-	color     string
+	bold       bool
+	italic     bool
+	underline  bool
+	color      string
+	background string
 }
 
 type AnsiRenderer struct {
@@ -100,10 +109,11 @@ type AnsiRenderer struct {
 	blockquoteDepth int  // nesting depth of blockquotes
 	osc8            bool // emit OSC-8 hyperlink sequences
 	headings        []Heading
+	renderStyle     RenderStyle
 }
 
-func NewAnsiRenderer(width int, osc8 bool) *AnsiRenderer {
-	return &AnsiRenderer{width: width, osc8: osc8}
+func NewAnsiRenderer(width int, osc8 bool, style RenderStyle) *AnsiRenderer {
+	return &AnsiRenderer{width: width, osc8: osc8, renderStyle: style}
 }
 
 func (r *AnsiRenderer) pushStyle(s style, w util.BufWriter) {
@@ -121,7 +131,7 @@ func (r *AnsiRenderer) popStyle(w util.BufWriter) {
 
 func (r *AnsiRenderer) applyCurrentStyle(w util.BufWriter) {
 	var bold, italic, underline bool
-	var color string
+	var color, background string
 	for _, s := range r.styles {
 		if s.bold {
 			bold = true
@@ -135,6 +145,9 @@ func (r *AnsiRenderer) applyCurrentStyle(w util.BufWriter) {
 		if s.color != "" {
 			color = s.color
 		}
+		if s.background != "" {
+			background = s.background
+		}
 	}
 	if bold {
 		r.writeString(w, Bold)
@@ -147,6 +160,9 @@ func (r *AnsiRenderer) applyCurrentStyle(w util.BufWriter) {
 	}
 	if color != "" {
 		r.writeString(w, color)
+	}
+	if background != "" {
+		r.writeString(w, background)
 	}
 }
 
@@ -233,12 +249,16 @@ func (r *AnsiRenderer) writeNewline(w util.BufWriter) {
 
 func (r *AnsiRenderer) writeIndent(w util.BufWriter) {
 	if r.blockquoteDepth > 0 {
-		r.writeString(w, Dim)
 		for i := 0; i < r.blockquoteDepth; i++ {
-			r.writeString(w, "█ ")
+			if r.renderStyle.BlockquoteBG != "" {
+				r.writeString(w, r.renderStyle.BlockquoteBG)
+				r.writeString(w, " ")
+				r.writeString(w, Reset)
+			} else {
+				r.writeString(w, " ")
+			}
 		}
-		r.writeString(w, Reset)
-		remaining := r.indent - r.blockquoteDepth*2
+		remaining := r.indent - r.blockquoteDepth
 		if remaining > 0 {
 			r.writeString(w, strings.Repeat(" ", remaining))
 		}
@@ -281,6 +301,7 @@ func (r *AnsiRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(ast.KindLink, r.renderLink)
 	reg.Register(ast.KindAutoLink, r.renderAutoLink)
 	reg.Register(ast.KindImage, r.renderImage)
+	reg.Register(KindMark, r.renderMark)
 	reg.Register(ast.KindRawHTML, r.renderRawHTML)
 
 	// Extension nodes
@@ -522,6 +543,15 @@ func (r *AnsiRenderer) renderEmphasis(w util.BufWriter, source []byte, node ast.
 		} else {
 			r.pushStyle(style{italic: true}, w)
 		}
+	} else {
+		r.popStyle(w)
+	}
+	return ast.WalkContinue, nil
+}
+
+func (r *AnsiRenderer) renderMark(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if entering {
+		r.pushStyle(style{background: r.renderStyle.HighlightBG}, w)
 	} else {
 		r.popStyle(w)
 	}

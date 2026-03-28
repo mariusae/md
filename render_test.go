@@ -6,9 +6,20 @@ import (
 	"testing"
 )
 
+var testRenderStyle = RenderStyle{
+	BlockquoteBG: "\033[48;5;238m",
+	HighlightBG:  "\033[48;5;250m",
+}
+
 func renderOpts(markdown string, width int, osc8 bool) string {
 	var buf bytes.Buffer
 	Render([]byte(markdown), &buf, width, osc8)
+	return buf.String()
+}
+
+func renderStyledOpts(markdown string, width int, osc8 bool, style RenderStyle) string {
+	var buf bytes.Buffer
+	RenderWithStyle([]byte(markdown), &buf, width, osc8, style)
 	return buf.String()
 }
 
@@ -207,35 +218,45 @@ func TestTaskCheckBoxChecked(t *testing.T) {
 }
 
 func TestBlockquote(t *testing.T) {
-	out := render("> hello world\n")
-	if !strings.Contains(out, "█") {
-		t.Error("blockquote should contain block bar character")
+	out := renderStyledOpts("> hello world\n", 80, false, testRenderStyle)
+	if strings.Contains(out, "█") {
+		t.Error("blockquote should not contain block bar character")
 	}
 	if !strings.Contains(out, "hello world") {
 		t.Error("blockquote text missing")
 	}
-	if !strings.Contains(out, Dim) {
-		t.Error("blockquote bar should be dimmed")
+	if !strings.Contains(out, testRenderStyle.BlockquoteBG+" "+Reset+" ") {
+		t.Error("blockquote should use tinted whitespace")
 	}
 }
 
 func TestBlockquoteWrapping(t *testing.T) {
-	out := renderOpts("> one two three four five six seven eight\n", 20, false)
+	out := renderStyledOpts("> one two three four five six seven eight\n", 20, false, testRenderStyle)
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	for _, line := range lines {
-		if !strings.Contains(line, "█") {
-			t.Errorf("wrapped blockquote line should contain bar: %q", line)
+		if !strings.Contains(line, testRenderStyle.BlockquoteBG+" "+Reset+" ") {
+			t.Errorf("wrapped blockquote line should contain tinted indent: %q", line)
 		}
 	}
 }
 
 func TestNestedBlockquote(t *testing.T) {
-	out := render("> > nested\n")
-	if strings.Count(out, "█") < 2 {
-		t.Error("nested blockquote should have two bar characters")
+	out := renderStyledOpts("> > nested\n", 80, false, testRenderStyle)
+	if strings.Count(out, testRenderStyle.BlockquoteBG+" "+Reset) < 2 {
+		t.Error("nested blockquote should have two tinted indent segments")
 	}
 	if !strings.Contains(out, "nested") {
 		t.Error("nested blockquote text missing")
+	}
+}
+
+func TestMarkHighlight(t *testing.T) {
+	out := renderStyledOpts("some ==important== text\n", 80, false, testRenderStyle)
+	if !strings.Contains(out, testRenderStyle.HighlightBG) {
+		t.Error("highlight should contain background tint")
+	}
+	if !strings.Contains(out, "important") {
+		t.Error("highlight text missing")
 	}
 }
 
