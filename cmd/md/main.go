@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -11,7 +12,33 @@ import (
 )
 
 func main() {
-	source, err := readInput()
+	opts, err := parseArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "md: %v\n", err)
+		os.Exit(1)
+	}
+
+	if opts.pager {
+		cfg := md.PagerConfig{
+			Paths: opts.paths,
+		}
+		if len(opts.paths) == 0 {
+			source, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "md: %v\n", err)
+				os.Exit(1)
+			}
+			cfg.InitialSource = source
+			cfg.Label = "stdin"
+		}
+		if err := md.RunPager(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "md: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	source, err := readInput(opts.paths)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "md: %v\n", err)
 		os.Exit(1)
@@ -30,15 +57,31 @@ func main() {
 	}
 }
 
-func readInput() ([]byte, error) {
-	args := os.Args[1:]
+type options struct {
+	pager bool
+	paths []string
+}
 
-	if len(args) == 0 {
+func parseArgs(args []string) (options, error) {
+	fs := flag.NewFlagSet("md", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	var opts options
+	fs.BoolVar(&opts.pager, "P", false, "launch the built-in pager")
+	if err := fs.Parse(args); err != nil {
+		return options{}, err
+	}
+	opts.paths = fs.Args()
+	return opts, nil
+}
+
+func readInput(paths []string) ([]byte, error) {
+	if len(paths) == 0 {
 		return io.ReadAll(os.Stdin)
 	}
 
 	var all []byte
-	for _, path := range args {
+	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", path, err)
