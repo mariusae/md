@@ -866,13 +866,7 @@ func (p *pager) refreshSearchState() {
 }
 
 func (p *pager) refreshOutline() {
-	filter := strings.ToLower(p.outline.filter)
-	p.outline.filtered = p.outline.filtered[:0]
-	for i, heading := range p.headings {
-		if filter == "" || strings.Contains(strings.ToLower(heading.Text), filter) {
-			p.outline.filtered = append(p.outline.filtered, i)
-		}
-	}
+	p.outline.filtered = p.matchingOutlineIndices(p.outline.filter, p.outline.filtered)
 	if len(p.outline.filtered) == 0 {
 		p.outline.selected = -1
 		p.outline.scroll = 0
@@ -888,6 +882,17 @@ func (p *pager) refreshOutline() {
 		return
 	}
 	p.outline.selected = p.outline.filtered[0]
+}
+
+func (p *pager) matchingOutlineIndices(filter string, dst []int) []int {
+	filter = strings.ToLower(filter)
+	dst = dst[:0]
+	for i, heading := range p.headings {
+		if filter == "" || strings.Contains(strings.ToLower(heading.Text), filter) {
+			dst = append(dst, i)
+		}
+	}
+	return dst
 }
 
 func (p *pager) currentHeadingIndex() int {
@@ -1157,6 +1162,9 @@ func (p *pager) insertOutlineRune(r rune) {
 	value := []rune(p.outline.filter)
 	cursor := clamp(p.outline.cursor, 0, len(value))
 	value = append(value[:cursor], append([]rune{r}, value[cursor:]...)...)
+	if len(p.matchingOutlineIndices(string(value), nil)) == 0 {
+		return
+	}
 	p.outline.filter = string(value)
 	p.outline.cursor = cursor + 1
 	p.refreshOutline()

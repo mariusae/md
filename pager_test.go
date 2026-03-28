@@ -285,6 +285,32 @@ func TestOutlineFilterNarrowsHeadings(t *testing.T) {
 	}
 }
 
+func TestInsertOutlineRuneRejectsZeroMatchFilter(t *testing.T) {
+	p := &pager{
+		headings: []Heading{
+			{Level: 1, Text: "Alpha", Line: 0},
+			{Level: 2, Text: "Alphabet", Line: 4},
+		},
+		outline: outlineState{
+			filter: "alp",
+			cursor: 3,
+		},
+	}
+
+	p.refreshOutline()
+	p.insertOutlineRune('z')
+
+	if p.outline.filter != "alp" {
+		t.Fatalf("outline.filter = %q, want %q", p.outline.filter, "alp")
+	}
+	if p.outline.cursor != 3 {
+		t.Fatalf("outline.cursor = %d, want 3", p.outline.cursor)
+	}
+	if len(p.outline.filtered) != 2 {
+		t.Fatalf("unexpected filtered count: %d", len(p.outline.filtered))
+	}
+}
+
 func TestMoveOutlineSelectionNavigates(t *testing.T) {
 	p := &pager{
 		height: 8,
