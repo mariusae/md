@@ -875,13 +875,16 @@ func (p *pager) refreshOutline() {
 
 	current := p.currentHeadingIndex()
 	if containsInt(p.outline.filtered, p.outline.selected) {
+		p.syncOutlineTopLine()
 		return
 	}
 	if containsInt(p.outline.filtered, current) {
 		p.outline.selected = current
+		p.syncOutlineTopLine()
 		return
 	}
 	p.outline.selected = p.outline.filtered[0]
+	p.syncOutlineTopLine()
 }
 
 func (p *pager) matchingOutlineIndices(filter string, dst []int) []int {
@@ -945,6 +948,13 @@ func (p *pager) moveOutlineSelectionTo(pos int) {
 	}
 	pos = clamp(pos, 0, len(p.outline.filtered)-1)
 	p.outline.selected = p.outline.filtered[pos]
+	p.syncOutlineTopLine()
+}
+
+func (p *pager) syncOutlineTopLine() {
+	if p.outline.selected < 0 || p.outline.selected >= len(p.headings) {
+		return
+	}
 	p.topLine = clamp(p.headings[p.outline.selected].Line, 0, p.maxTopLine())
 }
 

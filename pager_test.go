@@ -311,6 +311,36 @@ func TestInsertOutlineRuneRejectsZeroMatchFilter(t *testing.T) {
 	}
 }
 
+func TestInsertOutlineRuneNavigatesToFilteredSelection(t *testing.T) {
+	p := &pager{
+		height: 8,
+		headings: []Heading{
+			{Level: 1, Text: "Intro", Line: 0},
+			{Level: 2, Text: "Alpha", Line: 4},
+			{Level: 2, Text: "Beta", Line: 9},
+		},
+		lines: make([]string, 20),
+		outline: outlineState{
+			filter:   "",
+			cursor:   0,
+			selected: 0,
+			filtered: []int{0, 1, 2},
+		},
+	}
+
+	p.insertOutlineRune('b')
+
+	if p.outline.filter != "b" {
+		t.Fatalf("outline.filter = %q, want %q", p.outline.filter, "b")
+	}
+	if p.outline.selected != 2 {
+		t.Fatalf("outline.selected = %d, want 2", p.outline.selected)
+	}
+	if p.topLine != 9 {
+		t.Fatalf("topLine = %d, want 9", p.topLine)
+	}
+}
+
 func TestMoveOutlineSelectionNavigates(t *testing.T) {
 	p := &pager{
 		height: 8,
