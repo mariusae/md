@@ -51,14 +51,9 @@ func main() {
 		isTTY = true
 	}
 
-	renderStyle := md.RenderStyle{}
-	if isTTY {
-		if style, err := md.DetectRenderStyle(); err == nil {
-			renderStyle = style
-		}
-	}
-
-	if err := md.RenderWithStyle(source, os.Stdout, width, isTTY, renderStyle); err != nil {
+	// Keep one-shot rendering free of terminal protocol side effects.
+	// The pager owns the terminal session and can safely probe for tint colors.
+	if err := md.RenderWithStyle(source, os.Stdout, width, isTTY, md.RenderStyle{}); err != nil {
 		fmt.Fprintf(os.Stderr, "md: %v\n", err)
 		os.Exit(1)
 	}
