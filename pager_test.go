@@ -412,7 +412,7 @@ func TestParseSGRMouseEventScrollUp(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected mouseEvent, got %#v", ev)
 	}
-	if mouse.kind != mouseScrollUp || mouse.col != 12 || mouse.row != 5 {
+	if dir, ok := mouse.verticalWheelDirection(); !ok || dir != -1 || mouse.col != 12 || mouse.row != 5 || !mouse.pressed {
 		t.Fatalf("unexpected mouse event: %#v", mouse)
 	}
 }
@@ -424,7 +424,7 @@ func TestHandleMouseScrollsPager(t *testing.T) {
 		lines:   make([]string, 50),
 	}
 
-	p.handleMouse(mouseEvent{kind: mouseScrollDown, row: 1, col: 1})
+	p.handleMouse(mouseEvent{button: 65, row: 1, col: 1, pressed: true})
 
 	if p.topLine != 13 {
 		t.Fatalf("topLine = %d, want 13", p.topLine)
@@ -449,10 +449,151 @@ func TestHandleMouseScrollsOutlineSelection(t *testing.T) {
 	}
 
 	top, _, _, _ := p.outlinePanelRect()
-	p.handleMouse(mouseEvent{kind: mouseScrollDown, row: top, col: 1})
+	p.handleMouse(mouseEvent{button: 65, row: top, col: 1, pressed: true})
 
 	if p.outline.selected != 1 {
 		t.Fatalf("outline.selected = %d, want 1", p.outline.selected)
+	}
+}
+
+func TestSelectionBoundsNormalizesReverseDrag(t *testing.T) {
+	p := &pager{
+		plainLines: []string{"alpha", "beta"},
+		selection: selectionState{
+			active:  true,
+			anchor:  selectionCell{line: 1, col: 4},
+			current: selectionCell{line: 0, col: 2},
+		},
+	}
+
+	start, end, ok := p.selectionBounds()
+	if !ok {
+		t.Fatal("selectionBounds() ok = false, want true")
+	}
+	if start != (selectionPoint{line: 0, col: 1}) {
+		t.Fatalf("start = %#v", start)
+	}
+	if end != (selectionPoint{line: 1, col: 4}) {
+		t.Fatalf("end = %#v", end)
+	}
+}
+
+func TestSelectionMarkdownCopiesUnderlyingLinkMarkdown(t *testing.T) {
+	source := []byte("[alpha](https://example.com)")
+	p := &pager{
+		source:     source,
+		plainLines: []string{"alpha"},
+		lineMappings: []renderLineMapping{{
+			spans: []sourceSpan{
+				{start: 0, end: len(source)},
+				{start: 0, end: len(source)},
+				{start: 0, end: len(source)},
+				{start: 0, end: len(source)},
+				{start: 0, end: len(source)},
+			},
+		}},
+		selection: selectionState{
+			active:  true,
+			anchor:  selectionCell{line: 0, col: 2},
+			current: selectionCell{line: 0, col: 4},
+		},
+	}
+
+	if got := string(p.selectionMarkdown()); got != string(source) {
+		t.Fatalf("selectionMarkdown() = %q, want %q", got, string(source))
+	}
+}
+
+func TestSelectionMarkdownUsesRenderedLineMappingsForLink(t *testing.T) {
+	source := []byte("[alpha](https://example.com)\n")
+	result, err := RenderDocumentWithStyle(source, 80, true, RenderStyle{})
+	if err != nil {
+		t.Fatalf("RenderDocumentWithStyle() error = %v", err)
+	}
+
+	text := strings.TrimSuffix(result.Output, "\n")
+	p := &pager{
+		source:       source,
+		lines:        strings.Split(text, "\n"),
+		lineMappings: result.lineMappings,
+		plainLines:   []string{stripANSI(text)},
+		selection: selectionState{
+			active:  true,
+			anchor:  selectionCell{line: 0, col: 2},
+			current: selectionCell{line: 0, col: 4},
+		},
+	}
+
+	if got := string(p.selectionMarkdown()); got != "[alpha](https://example.com)" {
+		t.Fatalf("selectionMarkdown() = %q", got)
+	}
+}
+
+func TestSelectionMarkdownUsesRenderedLineMappingsForListItem(t *testing.T) {
+	source := []byte("- [alpha](https://example.com)\n")
+	result, err := RenderDocumentWithStyle(source, 80, true, RenderStyle{})
+	if err != nil {
+		t.Fatalf("RenderDocumentWithStyle() error = %v", err)
+	}
+
+	text := strings.TrimSuffix(result.Output, "\n")
+	p := &pager{
+		source:       source,
+		lines:        strings.Split(text, "\n"),
+		lineMappings: result.lineMappings,
+		plainLines:   []string{stripANSI(text)},
+		selection: selectionState{
+			active:  true,
+			anchor:  selectionCell{line: 0, col: 1},
+			current: selectionCell{line: 0, col: 9},
+		},
+	}
+
+	if got := string(p.selectionMarkdown()); got != "- [alpha](https://example.com)" {
+		t.Fatalf("selectionMarkdown() = %q", got)
+	}
+}
+
+func TestSelectionMarkdownPreservesSourceNewlinesBetweenLines(t *testing.T) {
+	source := []byte("- alpha\n- beta\n")
+	result, err := RenderDocumentWithStyle(source, 80, true, RenderStyle{})
+	if err != nil {
+		t.Fatalf("RenderDocumentWithStyle() error = %v", err)
+	}
+
+	text := strings.TrimSuffix(result.Output, "\n")
+	p := &pager{
+		source:       source,
+		lines:        strings.Split(text, "\n"),
+		lineMappings: result.lineMappings,
+		plainLines:   []string{"  • alpha", "  • beta"},
+		selection: selectionState{
+			active:  true,
+			anchor:  selectionCell{line: 0, col: 1},
+			current: selectionCell{line: 1, col: 9},
+		},
+	}
+
+	if got := string(p.selectionMarkdown()); got != "- alpha\n- beta" {
+		t.Fatalf("selectionMarkdown() = %q", got)
+	}
+}
+
+func TestSelectionMarkdownFallsBackToPlainText(t *testing.T) {
+	p := &pager{
+		plainLines: []string{"alpha beta"},
+		lineMappings: []renderLineMapping{{
+			spans: make([]sourceSpan, len([]rune("alpha beta"))),
+		}},
+		selection: selectionState{
+			active:  true,
+			anchor:  selectionCell{line: 0, col: 1},
+			current: selectionCell{line: 0, col: 5},
+		},
+	}
+
+	if got := string(p.selectionMarkdown()); got != "alpha" {
+		t.Fatalf("selectionMarkdown() = %q, want %q", got, "alpha")
 	}
 }
 

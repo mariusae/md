@@ -2,6 +2,7 @@ package md
 
 import (
 	"bufio"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -30,8 +31,8 @@ const (
 	cursorHome            = "\033[H"
 	enableFocusReporting  = "\033[?1004h"
 	disableFocusReporting = "\033[?1004l"
-	enableMouseReporting  = "\033[?1000h\033[?1006h"
-	disableMouseReporting = "\033[?1006l\033[?1000l"
+	enableMouseReporting  = "\033[?1000h\033[?1002h\033[?1006h"
+	disableMouseReporting = "\033[?1006l\033[?1002l\033[?1000l"
 	queryBackgroundColor  = "\033]11;?\033\\"
 )
 
@@ -50,6 +51,7 @@ type pager struct {
 	sourceModTime time.Time
 	headings      []Heading
 	lines         []string
+	lineMappings  []renderLineMapping
 	plainLines    []string
 	topLine       int
 	searchQuery   string
@@ -62,6 +64,7 @@ type pager struct {
 	noticeIsError bool
 	theme         tintTheme
 	outline       outlineState
+	selection     selectionState
 }
 
 type tintTheme struct {
@@ -120,22 +123,65 @@ type inputErrorEvent struct {
 }
 
 type mouseEvent struct {
-	kind mouseEventKind
-	row  int
-	col  int
+	button  int
+	row     int
+	col     int
+	pressed bool
 }
-
-type mouseEventKind int
-
-const (
-	mouseScrollUp mouseEventKind = iota
-	mouseScrollDown
-)
 
 type rgbColor struct {
 	r uint8
 	g uint8
 	b uint8
+}
+
+type selectionState struct {
+	active    bool
+	selecting bool
+	dragged   bool
+	flash     bool
+	anchor    selectionCell
+	current   selectionCell
+}
+
+type selectionCell struct {
+	line int
+	col  int
+}
+
+type selectionPoint struct {
+	line int
+	col  int
+}
+
+func (e mouseEvent) isMotion() bool {
+	return e.button >= 32 && e.button < 64
+}
+
+func (e mouseEvent) isWheel() bool {
+	return !e.isMotion() && e.button&64 != 0
+}
+
+func (e mouseEvent) baseButton() int {
+	return e.button & 3
+}
+
+func (e mouseEvent) verticalWheelDirection() (int, bool) {
+	if !e.isWheel() {
+		return 0, false
+	}
+	switch e.baseButton() {
+	case 0:
+		return -1, true
+	case 1:
+		return 1, true
+	default:
+		return 0, false
+	}
+}
+
+func (e mouseEvent) noButtonsDown() bool {
+	return e.isMotion() && e.baseButton() == 3
 }
 
 var timeNow = time.Now
@@ -264,21 +310,312 @@ func (p *pager) handleEvent(ev inputEvent) (bool, error) {
 
 func (p *pager) handleMouse(ev mouseEvent) {
 	if p.outline.active && p.mouseInOutline(ev.row, ev.col) {
-		switch ev.kind {
-		case mouseScrollUp:
-			p.moveOutlineSelection(-1)
-		case mouseScrollDown:
-			p.moveOutlineSelection(1)
+		if dir, ok := ev.verticalWheelDirection(); ok {
+			p.moveOutlineSelection(dir)
 		}
 		return
 	}
 
-	switch ev.kind {
-	case mouseScrollUp:
-		p.scrollBy(-3)
-	case mouseScrollDown:
-		p.scrollBy(3)
+	if dir, ok := ev.verticalWheelDirection(); ok {
+		p.scrollBy(3 * dir)
+		return
 	}
+
+	p.handleSelectionMouse(ev)
+}
+
+func (p *pager) handleSelectionMouse(ev mouseEvent) {
+	cell, ok := p.mouseSelectionCell(ev.row, ev.col)
+	if ev.isMotion() {
+		if !p.selection.selecting || !ok {
+			return
+		}
+		if cell != p.selection.current {
+			p.selection.dragged = true
+		}
+		p.selection.active = true
+		p.selection.current = cell
+		if ev.noButtonsDown() {
+			_ = p.finishSelectionCopy()
+		}
+		return
+	}
+
+	if ev.baseButton() != 0 || !ok {
+		return
+	}
+
+	if ev.pressed {
+		p.selection = selectionState{
+			active:    true,
+			selecting: true,
+			anchor:    cell,
+			current:   cell,
+		}
+		return
+	}
+
+	if !p.selection.selecting {
+		return
+	}
+	if cell != p.selection.current {
+		p.selection.dragged = true
+	}
+	p.selection.current = cell
+	_ = p.finishSelectionCopy()
+}
+
+func (p *pager) finishSelectionCopy() error {
+	p.selection.selecting = false
+	if !p.selection.dragged {
+		p.selection.active = false
+		return nil
+	}
+
+	text := p.selectionMarkdown()
+	if len(text) == 0 {
+		p.selection.active = false
+		return nil
+	}
+	if err := p.copyToClipboard(text); err != nil {
+		p.setNotice(err.Error(), true)
+		return err
+	}
+	p.clearNotice()
+	return p.flashSelection()
+}
+
+func (p *pager) flashSelection() error {
+	if _, _, ok := p.selectionBounds(); !ok {
+		return nil
+	}
+	p.selection.flash = true
+	if err := p.draw(); err != nil {
+		p.selection.flash = false
+		return err
+	}
+	time.Sleep(80 * time.Millisecond)
+	p.selection.flash = false
+	return p.draw()
+}
+
+func (p *pager) copyToClipboard(text []byte) error {
+	if len(text) == 0 {
+		return nil
+	}
+	_, err := fmt.Fprintf(p.tty, "\x1b]52;c;%s\x07", base64.StdEncoding.EncodeToString(text))
+	return err
+}
+
+func (p *pager) mouseSelectionCell(row, col int) (selectionCell, bool) {
+	if row < 1 || row > p.viewHeight() || len(p.plainLines) == 0 {
+		return selectionCell{}, false
+	}
+	line := p.topLine + row - 1
+	if line < 0 || line >= len(p.plainLines) {
+		return selectionCell{}, false
+	}
+	width := utf8.RuneCountInString(p.plainLines[line])
+	col = clamp(col, 1, width+1)
+	return selectionCell{line: line, col: col}, true
+}
+
+func (p *pager) selectionBounds() (selectionPoint, selectionPoint, bool) {
+	if !p.selection.active {
+		return selectionPoint{}, selectionPoint{}, false
+	}
+
+	anchor := p.selection.anchor
+	current := p.selection.current
+	if compareSelectionCells(anchor, current) <= 0 {
+		start := p.clampSelectionPoint(selectionPoint{line: anchor.line, col: anchor.col - 1})
+		end := p.clampSelectionPoint(selectionPoint{line: current.line, col: current.col})
+		if compareSelectionPoints(start, end) >= 0 {
+			return selectionPoint{}, selectionPoint{}, false
+		}
+		return start, end, true
+	}
+
+	start := p.clampSelectionPoint(selectionPoint{line: current.line, col: current.col - 1})
+	end := p.clampSelectionPoint(selectionPoint{line: anchor.line, col: anchor.col})
+	if compareSelectionPoints(start, end) >= 0 {
+		return selectionPoint{}, selectionPoint{}, false
+	}
+	return start, end, true
+}
+
+func (p *pager) clampSelectionPoint(point selectionPoint) selectionPoint {
+	if len(p.plainLines) == 0 {
+		return selectionPoint{}
+	}
+	point.line = clamp(point.line, 0, len(p.plainLines)-1)
+	width := utf8.RuneCountInString(p.plainLines[point.line])
+	point.col = clamp(point.col, 0, width)
+	return point
+}
+
+func (p *pager) selectionVisibleRange(lineIdx int) (int, int, bool) {
+	start, end, ok := p.selectionBounds()
+	if !ok || lineIdx < start.line || lineIdx > end.line {
+		return 0, 0, false
+	}
+
+	width := p.selectionLineWidth(lineIdx)
+	from := 0
+	to := width
+	if lineIdx == start.line {
+		from = clamp(start.col, 0, width)
+	}
+	if lineIdx == end.line {
+		to = clamp(end.col, 0, width)
+	}
+	if from >= to {
+		return 0, 0, false
+	}
+	return from, to, true
+}
+
+func (p *pager) selectionLineWidth(lineIdx int) int {
+	if lineIdx >= 0 && lineIdx < len(p.lineMappings) {
+		return len(p.lineMappings[lineIdx].spans)
+	}
+	if lineIdx >= 0 && lineIdx < len(p.plainLines) {
+		return utf8.RuneCountInString(p.plainLines[lineIdx])
+	}
+	return 0
+}
+
+func (p *pager) selectionMarkdown() []byte {
+	start, end, ok := p.selectionBounds()
+	if !ok {
+		return nil
+	}
+
+	var spans []sourceSpan
+	for lineIdx := start.line; lineIdx <= end.line; lineIdx++ {
+		if lineIdx < 0 || lineIdx >= len(p.lineMappings) {
+			continue
+		}
+		lineSpans := p.lineMappings[lineIdx].spans
+		from := 0
+		to := len(lineSpans)
+		if lineIdx == start.line {
+			from = clamp(start.col, 0, len(lineSpans))
+		}
+		if lineIdx == end.line {
+			to = clamp(end.col, 0, len(lineSpans))
+		}
+		for i := from; i < to; i++ {
+			if lineSpans[i].valid() {
+				spans = append(spans, lineSpans[i])
+			}
+		}
+	}
+
+	spans = mergeOrderedSourceSpans(spans)
+	if len(spans) == 0 {
+		return []byte(p.selectionPlainText(start, end))
+	}
+
+	var out []byte
+	prevEnd := -1
+	for _, span := range spans {
+		if prevEnd >= 0 && span.start > prevEnd {
+			out = append(out, p.source[prevEnd:span.start]...)
+		}
+		out = append(out, p.source[span.start:span.end]...)
+		prevEnd = span.end
+	}
+	return out
+}
+
+func (p *pager) selectionPlainText(start, end selectionPoint) string {
+	var out strings.Builder
+	for lineIdx := start.line; lineIdx <= end.line; lineIdx++ {
+		if lineIdx < 0 || lineIdx >= len(p.plainLines) {
+			continue
+		}
+		line := []rune(p.plainLines[lineIdx])
+		from := 0
+		to := len(line)
+		if lineIdx == start.line {
+			from = clamp(start.col, 0, len(line))
+		}
+		if lineIdx == end.line {
+			to = clamp(end.col, 0, len(line))
+		}
+		if from < to {
+			out.WriteString(string(line[from:to]))
+		}
+		if lineIdx < end.line {
+			out.WriteByte('\n')
+		}
+	}
+	return out.String()
+}
+
+func compareSelectionCells(a, b selectionCell) int {
+	if a.line != b.line {
+		if a.line < b.line {
+			return -1
+		}
+		return 1
+	}
+	switch {
+	case a.col < b.col:
+		return -1
+	case a.col > b.col:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func compareSelectionPoints(a, b selectionPoint) int {
+	if a.line != b.line {
+		if a.line < b.line {
+			return -1
+		}
+		return 1
+	}
+	switch {
+	case a.col < b.col:
+		return -1
+	case a.col > b.col:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func mergeOrderedSourceSpans(spans []sourceSpan) []sourceSpan {
+	if len(spans) == 0 {
+		return nil
+	}
+
+	merged := make([]sourceSpan, 0, len(spans))
+	for _, span := range spans {
+		if !span.valid() {
+			continue
+		}
+		if len(merged) == 0 {
+			merged = append(merged, span)
+			continue
+		}
+
+		last := &merged[len(merged)-1]
+		if span.start > last.end {
+			merged = append(merged, span)
+			continue
+		}
+		if span.start < last.start {
+			last.start = span.start
+		}
+		if span.end > last.end {
+			last.end = span.end
+		}
+	}
+	return merged
 }
 
 func (p *pager) handleKey(ev keyEvent) bool {
@@ -502,6 +839,7 @@ func (p *pager) rebuild() error {
 	text := strings.TrimSuffix(result.Output, "\n")
 	if text == "" {
 		p.lines = nil
+		p.lineMappings = nil
 		p.plainLines = nil
 		p.headings = nil
 		p.topLine = 0
@@ -511,6 +849,10 @@ func (p *pager) rebuild() error {
 	}
 
 	p.lines = strings.Split(text, "\n")
+	p.lineMappings = append([]renderLineMapping(nil), result.lineMappings...)
+	if len(p.lineMappings) > len(p.lines) {
+		p.lineMappings = p.lineMappings[:len(p.lines)]
+	}
 	p.plainLines = make([]string, len(p.lines))
 	for i, line := range p.lines {
 		p.plainLines[i] = stripANSI(line)
@@ -769,10 +1111,15 @@ func (p *pager) outlineCursorPosition() (int, int) {
 
 func (p *pager) renderLine(lineIdx int) string {
 	line := p.lines[lineIdx]
-	if p.searchQuery == "" {
-		return line
+	if p.searchQuery != "" {
+		line = highlightSearchMatches(line, p.plainLines[lineIdx], p.searchQuery, p.highlightStart())
 	}
-	return highlightSearchMatches(line, p.plainLines[lineIdx], p.searchQuery, p.highlightStart())
+	if !p.selection.flash {
+		if start, end, ok := p.selectionVisibleRange(lineIdx); ok {
+			line = highlightVisibleRange(line, start, end, p.selectionHighlightStart())
+		}
+	}
+	return line
 }
 
 func (p *pager) highlightStart() string {
@@ -780,6 +1127,13 @@ func (p *pager) highlightStart() string {
 		return p.theme.highlightBG + Bold
 	}
 	return Reverse + Bold
+}
+
+func (p *pager) selectionHighlightStart() string {
+	if p.theme.highlightBG != "" {
+		return p.theme.highlightBG
+	}
+	return Reverse
 }
 
 func (p *pager) statusBarLeft() string {
@@ -1424,10 +1778,6 @@ func readCSIEvent(reader *bufio.Reader) (inputEvent, error) {
 }
 
 func parseSGRMouseEvent(params string, final byte) (inputEvent, error) {
-	if final != 'M' {
-		return nil, nil
-	}
-
 	fields := strings.Split(strings.TrimPrefix(params, "<"), ";")
 	if len(fields) != 3 {
 		return nil, nil
@@ -1444,14 +1794,7 @@ func parseSGRMouseEvent(params string, final byte) (inputEvent, error) {
 		return nil, nil
 	}
 
-	switch button & 0x43 {
-	case 64:
-		return mouseEvent{kind: mouseScrollUp, row: row, col: col}, nil
-	case 65:
-		return mouseEvent{kind: mouseScrollDown, row: row, col: col}, nil
-	default:
-		return nil, nil
-	}
+	return mouseEvent{button: button, row: row, col: col, pressed: final == 'M'}, nil
 }
 
 func waitForInput(tty *os.File, timeout time.Duration) (bool, error) {
@@ -1884,7 +2227,17 @@ func highlightSearchMatches(rendered, plain, query, startSeq string) string {
 	if len(matches) == 0 || startSeq == "" {
 		return rendered
 	}
+	return highlightVisibleRanges(rendered, matches, startSeq)
+}
 
+func highlightVisibleRange(rendered string, start, end int, startSeq string) string {
+	if startSeq == "" || start >= end {
+		return rendered
+	}
+	return highlightVisibleRanges(rendered, []matchRange{{start: start, end: end}}, startSeq)
+}
+
+func highlightVisibleRanges(rendered string, matches []matchRange, startSeq string) string {
 	var (
 		out        strings.Builder
 		runePos    int
