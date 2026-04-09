@@ -922,7 +922,6 @@ func (p *pager) renderBar(text string, prompt bool) string {
 }
 
 func (p *pager) renderStatusBar() string {
-	left := p.statusBarLeft()
 	right := p.statusBarRight()
 
 	if p.width <= 0 {
@@ -936,14 +935,14 @@ func (p *pager) renderStatusBar() string {
 	}
 
 	availableLeft := p.width - rightWidth
-	if left != "" && right != "" {
+	if p.statusBarLeft() != "" && right != "" {
 		availableLeft -= 2
 	}
 	if availableLeft < 0 {
 		availableLeft = 0
 	}
 
-	left = fitToWidth(left, availableLeft)
+	left := p.statusBarLeftFitted(availableLeft)
 	leftWidth := visibleWidth(left)
 	gapWidth := p.width - leftWidth - rightWidth
 	if left != "" && right != "" && gapWidth >= 2 {
@@ -1137,22 +1136,60 @@ func (p *pager) selectionHighlightStart() string {
 }
 
 func (p *pager) statusBarLeft() string {
-	parts := []string{p.statusSectionPath()}
+	section, extras := p.statusBarLeftParts()
+	parts := []string{section}
+	parts = append(parts, extras...)
+	return strings.Join(parts, "  ")
+}
+
+func (p *pager) statusBarLeftParts() (string, []string) {
+	section := p.statusSectionPath()
+	var extras []string
 	if p.searchQuery != "" {
 		if len(p.searchMatches) == 0 {
-			parts = append(parts, fmt.Sprintf("/%s 0", p.searchQuery))
+			extras = append(extras, fmt.Sprintf("/%s 0", p.searchQuery))
 		} else {
 			current := p.searchIndex + 1
 			if current < 1 {
 				current = 1
 			}
-			parts = append(parts, fmt.Sprintf("/%s %d/%d", p.searchQuery, current, len(p.searchMatches)))
+			extras = append(extras, fmt.Sprintf("/%s %d/%d", p.searchQuery, current, len(p.searchMatches)))
 		}
 	}
 	if p.notice != "" {
-		parts = append(parts, p.notice)
+		extras = append(extras, p.notice)
 	}
-	return strings.Join(parts, "  ")
+	return section, extras
+}
+
+func (p *pager) statusBarLeftFitted(width int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	section, extras := p.statusBarLeftParts()
+	if len(extras) == 0 {
+		return p.statusSectionPathFitted(width)
+	}
+
+	extrasText := strings.Join(extras, "  ")
+	if visibleWidth(extrasText) >= width {
+		return fitToWidth(extrasText, width)
+	}
+
+	gapWidth := 0
+	if section != "" {
+		gapWidth = 2
+	}
+	sectionWidth := width - visibleWidth(extrasText) - gapWidth
+	if sectionWidth < 0 {
+		sectionWidth = 0
+	}
+	section = p.statusSectionPathFitted(sectionWidth)
+	if section == "" {
+		return extrasText
+	}
+	return section + strings.Repeat(" ", gapWidth) + extrasText
 }
 
 func (p *pager) statusBarRight() string {
@@ -1185,6 +1222,49 @@ func (p *pager) statusSectionPath() string {
 		parts = append(parts, text)
 	}
 	return p.cfg.Label + ": " + strings.Join(parts, " › ")
+}
+
+func (p *pager) statusSectionPathFitted(width int) string {
+	path := p.currentHeadingPath()
+	if len(path) == 0 {
+		return fitToWidthLeftPlain(p.cfg.Label, width)
+	}
+
+	headingTexts := make([]string, len(path))
+	for i, heading := range path {
+		headingTexts[i] = heading.Text
+	}
+	plain := p.cfg.Label + ": " + strings.Join(headingTexts, " › ")
+	display, offset := fitToWidthLeftPlainWithOffset(plain, width)
+	if display == "" {
+		return ""
+	}
+
+	lastHeading := []rune(headingTexts[len(headingTexts)-1])
+	plainRunes := []rune(plain)
+	lastEnd := len(plainRunes)
+	lastStart := lastEnd - len(lastHeading)
+	displayRunes := []rune(display)
+	displayPrefix := len(displayRunes) - (len(plainRunes) - offset)
+	if displayPrefix < 0 {
+		displayPrefix = 0
+	}
+
+	overlapStart := max(lastStart, offset)
+	overlapEnd := lastEnd
+	if overlapStart >= overlapEnd {
+		return display
+	}
+
+	visibleStart := displayPrefix + (overlapStart - offset)
+	visibleEnd := displayPrefix + (overlapEnd - offset)
+	visibleStart = clamp(visibleStart, 0, len(displayRunes))
+	visibleEnd = clamp(visibleEnd, visibleStart, len(displayRunes))
+	if visibleStart >= visibleEnd {
+		return display
+	}
+
+	return string(displayRunes[:visibleStart]) + Bold + string(displayRunes[visibleStart:visibleEnd]) + Reset + string(displayRunes[visibleEnd:])
 }
 
 func (p *pager) openOutline() {
@@ -2429,6 +2509,30 @@ func fitToWidth(text string, width int) string {
 		return truncateVisible(text, width)
 	}
 	return truncateVisible(text, width-3) + "..."
+}
+
+func fitToWidthLeftPlain(text string, width int) string {
+	truncated, _ := fitToWidthLeftPlainWithOffset(text, width)
+	return truncated
+}
+
+func fitToWidthLeftPlainWithOffset(text string, width int) (string, int) {
+	if width <= 0 {
+		return "", 0
+	}
+
+	runes := []rune(text)
+	if len(runes) <= width {
+		return text, 0
+	}
+	if width <= 3 {
+		start := len(runes) - width
+		return string(runes[start:]), start
+	}
+
+	keep := width - 3
+	start := len(runes) - keep
+	return "..." + string(runes[start:]), start
 }
 
 func visibleWidth(text string) int {

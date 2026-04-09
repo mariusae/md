@@ -638,6 +638,51 @@ func TestStatusSectionPath(t *testing.T) {
 	}
 }
 
+func TestStatusSectionPathFittedTruncatesFromLeft(t *testing.T) {
+	p := &pager{
+		cfg: PagerConfig{Label: "very-long-file-name.md"},
+		headings: []Heading{
+			{Level: 1, Text: "Top", Line: 0},
+			{Level: 2, Text: "Middle", Line: 3},
+			{Level: 3, Text: "Innermost", Line: 6},
+		},
+		topLine: 7,
+	}
+
+	got := p.statusSectionPathFitted(18)
+
+	if stripANSI(got) != "...dle › Innermost" {
+		t.Fatalf("stripANSI(statusSectionPathFitted()) = %q", stripANSI(got))
+	}
+	if !strings.Contains(got, Bold+"Innermost"+Reset) {
+		t.Fatalf("expected innermost heading to remain bold: %q", got)
+	}
+}
+
+func TestStatusBarLeftFittedPreservesInnermostBreadcrumbWithSearch(t *testing.T) {
+	p := &pager{
+		cfg: PagerConfig{Label: "very-long-file-name.md"},
+		headings: []Heading{
+			{Level: 1, Text: "Top", Line: 0},
+			{Level: 2, Text: "Middle", Line: 3},
+			{Level: 3, Text: "Innermost", Line: 6},
+		},
+		topLine:       7,
+		searchQuery:   "needle",
+		searchMatches: []int{1, 5},
+		searchIndex:   1,
+	}
+
+	got := p.statusBarLeftFitted(28)
+
+	if !strings.Contains(stripANSI(got), "Innermost") {
+		t.Fatalf("expected fitted left status to keep innermost breadcrumb: %q", stripANSI(got))
+	}
+	if !strings.Contains(stripANSI(got), "/needle 2/2") {
+		t.Fatalf("expected fitted left status to keep search info: %q", stripANSI(got))
+	}
+}
+
 func TestRenderStatusBarRightAlignsMetaAndOmitsLineNumbers(t *testing.T) {
 	oldTimeNow := timeNow
 	timeNow = func() time.Time {
