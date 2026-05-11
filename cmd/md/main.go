@@ -50,6 +50,9 @@ func main() {
 		width = w
 		isTTY = true
 	}
+	if opts.width > 0 {
+		width = opts.width
+	}
 
 	// Keep one-shot rendering free of terminal protocol side effects.
 	// The pager owns the terminal session and can safely probe for tint colors.
@@ -61,6 +64,7 @@ func main() {
 
 type options struct {
 	pager bool
+	width int
 	paths []string
 }
 
@@ -70,8 +74,18 @@ func parseArgs(args []string) (options, error) {
 
 	var opts options
 	fs.BoolVar(&opts.pager, "P", false, "launch the built-in pager")
+	fs.IntVar(&opts.width, "w", 0, "render width in characters")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
+	}
+	widthSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "w" {
+			widthSet = true
+		}
+	})
+	if widthSet && opts.width <= 0 {
+		return options{}, fmt.Errorf("-w must be a positive integer")
 	}
 	opts.paths = fs.Args()
 	return opts, nil

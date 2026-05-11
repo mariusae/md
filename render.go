@@ -62,6 +62,7 @@ func RenderDocument(source []byte, width int, osc8 bool) (RenderResult, error) {
 }
 
 func RenderDocumentWithStyle(source []byte, width int, osc8 bool, style RenderStyle) (RenderResult, error) {
+	frontMatter, frontMatterOffset, body, bodyOffset, hasFrontMatter := splitFrontMatter(source)
 	ansiRenderer := NewAnsiRenderer(width, osc8, style)
 	gm := goldmark.New(
 		goldmark.WithExtensions(extension.GFM, MarkExtension),
@@ -74,17 +75,148 @@ func RenderDocumentWithStyle(source []byte, width int, osc8 bool, style RenderSt
 		),
 	)
 	var buf bytes.Buffer
-	if err := gm.Convert(source, &buf); err != nil {
+	if err := gm.Convert(body, &buf); err != nil {
 		return RenderResult{}, err
 	}
-	return RenderResult{
+	result := RenderResult{
 		Output:       buf.String(),
 		Headings:     append([]Heading(nil), ansiRenderer.headings...),
 		lineMappings: append([]renderLineMapping(nil), ansiRenderer.lineMappings...),
-	}, nil
+	}
+	offsetRenderResult(&result, bodyOffset, 0)
+	if hasFrontMatter {
+		frontOutput, frontMappings := renderFrontMatter(frontMatter, frontMatterOffset, width)
+		lineOffset := strings.Count(frontOutput, "\n")
+		offsetRenderResult(&result, 0, lineOffset)
+		result.Output = frontOutput + result.Output
+		result.lineMappings = append(frontMappings, result.lineMappings...)
+	}
+	return result, nil
+}
+
+func offsetRenderResult(result *RenderResult, sourceOffset, lineOffset int) {
+	for i := range result.Headings {
+		result.Headings[i].Line += lineOffset
+	}
+	if sourceOffset == 0 {
+		return
+	}
+	for lineIdx := range result.lineMappings {
+		spans := result.lineMappings[lineIdx].spans
+		for spanIdx := range spans {
+			if !spans[spanIdx].valid() {
+				continue
+			}
+			spans[spanIdx].start += sourceOffset
+			spans[spanIdx].end += sourceOffset
+		}
+	}
+}
+
+func splitFrontMatter(source []byte) (frontMatter []byte, frontMatterOffset int, body []byte, bodyOffset int, ok bool) {
+	start := 0
+	if bytes.HasPrefix(source, []byte("\xef\xbb\xbf")) {
+		start = 3
+	}
+	firstLineEnd := nextLineOffset(source, start)
+	if !isFrontMatterDelimiter(source[start:firstLineEnd], true) {
+		return nil, 0, source, 0, false
+	}
+
+	contentStart := firstLineEnd
+	for lineStart := contentStart; lineStart < len(source); {
+		lineEnd := nextLineOffset(source, lineStart)
+		if isFrontMatterDelimiter(source[lineStart:lineEnd], false) {
+			return source[contentStart:lineStart], contentStart, source[lineEnd:], lineEnd, true
+		}
+		lineStart = lineEnd
+	}
+	return nil, 0, source, 0, false
+}
+
+func nextLineOffset(source []byte, start int) int {
+	if start >= len(source) {
+		return len(source)
+	}
+	if idx := bytes.IndexByte(source[start:], '\n'); idx >= 0 {
+		return start + idx + 1
+	}
+	return len(source)
+}
+
+func isFrontMatterDelimiter(line []byte, opening bool) bool {
+	line = bytes.TrimSuffix(line, []byte("\n"))
+	line = bytes.TrimSuffix(line, []byte("\r"))
+	text := string(line)
+	if opening {
+		return text == "---"
+	}
+	return text == "---" || text == "..."
+}
+
+func renderFrontMatter(frontMatter []byte, sourceOffset, width int) (string, []renderLineMapping) {
+	hrWidth := width
+	if hrWidth <= 0 {
+		hrWidth = 40
+	}
+
+	var out strings.Builder
+	var mappings []renderLineMapping
+	appendMappedFrontMatter(&out, &mappings, string(frontMatter), sourceOffset)
+	if len(frontMatter) > 0 && frontMatter[len(frontMatter)-1] != '\n' {
+		appendUnmappedFrontMatter(&out, &mappings, "\n")
+	}
+	appendUnmappedFrontMatter(&out, &mappings, Dim+strings.Repeat("\u2500", hrWidth)+Reset+"\n\n")
+	return out.String(), mappings
+}
+
+func appendMappedFrontMatter(out *strings.Builder, mappings *[]renderLineMapping, text string, sourceOffset int) {
+	if len(*mappings) == 0 {
+		*mappings = append(*mappings, renderLineMapping{})
+	}
+	offset := sourceOffset
+	for len(text) > 0 {
+		rn, size := utf8.DecodeRuneInString(text)
+		out.WriteString(text[:size])
+		if rn == '\n' {
+			*mappings = append(*mappings, renderLineMapping{})
+		} else {
+			(*mappings)[len(*mappings)-1].spans = append((*mappings)[len(*mappings)-1].spans, sourceSpan{
+				start: offset,
+				end:   offset + size,
+			})
+		}
+		offset += size
+		text = text[size:]
+	}
+}
+
+func appendUnmappedFrontMatter(out *strings.Builder, mappings *[]renderLineMapping, text string) {
+	if len(*mappings) == 0 {
+		*mappings = append(*mappings, renderLineMapping{})
+	}
+	for len(text) > 0 {
+		if text[0] == 0x1b {
+			seq, _, next := consumeEscapeSequence(text, 0)
+			if seq != "" && next > 0 {
+				out.WriteString(text[:next])
+				text = text[next:]
+				continue
+			}
+		}
+		rn, size := utf8.DecodeRuneInString(text)
+		out.WriteString(text[:size])
+		if rn == '\n' {
+			*mappings = append(*mappings, renderLineMapping{})
+		} else {
+			(*mappings)[len(*mappings)-1].spans = append((*mappings)[len(*mappings)-1].spans, sourceSpan{})
+		}
+		text = text[size:]
+	}
 }
 
 func ExtractHeadings(source []byte) ([]Heading, error) {
+	_, _, source, _, _ = splitFrontMatter(source)
 	gm := goldmark.New(goldmark.WithExtensions(extension.GFM, MarkExtension))
 	doc := gm.Parser().Parse(text.NewReader(source))
 	var headings []Heading

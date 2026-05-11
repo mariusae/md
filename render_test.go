@@ -141,6 +141,43 @@ func TestThematicBreak(t *testing.T) {
 	}
 }
 
+func TestFrontMatterRendersRawBeforeContent(t *testing.T) {
+	out := render("---\ntitle: **Raw**\ntags:\n  - go\n---\n# Body\n")
+	wantPrefix := "title: **Raw**\ntags:\n  - go\n" + Dim + strings.Repeat("\u2500", 80) + Reset + "\n\n"
+	if !strings.HasPrefix(out, wantPrefix) {
+		t.Fatalf("frontmatter prefix = %q, want prefix %q", out, wantPrefix)
+	}
+	if strings.Contains(out[:len(wantPrefix)], Bold) {
+		t.Fatalf("frontmatter should not be markdown rendered: %q", out[:len(wantPrefix)])
+	}
+	if !strings.Contains(out[len(wantPrefix):], Bold+"Body") {
+		t.Fatalf("markdown content after frontmatter should render normally: %q", out)
+	}
+}
+
+func TestFrontMatterOffsetsHeadingLines(t *testing.T) {
+	result, err := RenderDocument([]byte("---\ntitle: Raw\n---\n# Body\n"), 12, false)
+	if err != nil {
+		t.Fatalf("RenderDocument returned error: %v", err)
+	}
+	if len(result.Headings) != 1 {
+		t.Fatalf("headings = %#v, want one heading", result.Headings)
+	}
+	if result.Headings[0].Line != 3 {
+		t.Fatalf("heading line = %d, want 3", result.Headings[0].Line)
+	}
+}
+
+func TestExtractHeadingsSkipsFrontMatter(t *testing.T) {
+	headings, err := ExtractHeadings([]byte("---\ntitle: # Not Heading\n---\n# Body\n"))
+	if err != nil {
+		t.Fatalf("ExtractHeadings returned error: %v", err)
+	}
+	if len(headings) != 1 || headings[0].Text != "Body" {
+		t.Fatalf("headings = %#v, want Body", headings)
+	}
+}
+
 func TestNestedEmphasisInHeading(t *testing.T) {
 	out := render("# Hello *world*\n")
 	// After italic ends, bold should be restored
