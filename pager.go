@@ -40,6 +40,7 @@ type PagerConfig struct {
 	Paths         []string
 	InitialSource []byte
 	Label         string
+	Width         int
 }
 
 type pager struct {
@@ -825,7 +826,7 @@ func (p *pager) loadSource() ([]byte, time.Time, error) {
 }
 
 func (p *pager) rebuild() error {
-	result, err := RenderDocumentWithStyle(p.source, p.width, true, p.theme.renderStyle())
+	result, err := RenderDocumentWithStyle(p.source, p.renderWidth(), true, p.theme.renderStyle())
 	if err != nil {
 		return err
 	}
@@ -862,6 +863,13 @@ func (p *pager) rebuild() error {
 	p.refreshSearchAround(anchor)
 	p.refreshOutline()
 	return nil
+}
+
+func (p *pager) renderWidth() int {
+	if p.cfg.Width > 0 {
+		return p.cfg.Width
+	}
+	return p.width
 }
 
 func (p *pager) draw() error {

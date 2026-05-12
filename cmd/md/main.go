@@ -14,13 +14,22 @@ import (
 func main() {
 	opts, err := parseArgs(os.Args[1:])
 	if err != nil {
+		if err == flag.ErrHelp {
+			printUsage(os.Stdout)
+			return
+		}
 		fmt.Fprintf(os.Stderr, "md: %v\n", err)
 		os.Exit(1)
+	}
+	if opts.help {
+		printUsage(os.Stdout)
+		return
 	}
 
 	if opts.pager {
 		cfg := md.PagerConfig{
 			Paths: opts.paths,
+			Width: opts.width,
 		}
 		if len(opts.paths) == 0 {
 			source, err := io.ReadAll(os.Stdin)
@@ -64,6 +73,7 @@ func main() {
 
 type options struct {
 	pager bool
+	help  bool
 	width int
 	paths []string
 }
@@ -74,9 +84,13 @@ func parseArgs(args []string) (options, error) {
 
 	var opts options
 	fs.BoolVar(&opts.pager, "P", false, "launch the built-in pager")
+	fs.BoolVar(&opts.help, "help", false, "show help")
 	fs.IntVar(&opts.width, "w", 0, "render width in characters")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
+	}
+	if opts.help {
+		return opts, nil
 	}
 	widthSet := false
 	fs.Visit(func(f *flag.Flag) {
@@ -89,6 +103,15 @@ func parseArgs(args []string) (options, error) {
 	}
 	opts.paths = fs.Args()
 	return opts, nil
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, "Usage: md [options] [file ...]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Options:")
+	fmt.Fprintln(w, "  -P          launch the built-in pager")
+	fmt.Fprintln(w, "  -w width    render width in characters")
+	fmt.Fprintln(w, "  -help       show help")
 }
 
 func readInput(paths []string) ([]byte, error) {
