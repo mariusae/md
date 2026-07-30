@@ -72,11 +72,43 @@ func TestInlineCode(t *testing.T) {
 
 func TestFencedCodeBlock(t *testing.T) {
 	out := render("```\nfoo\nbar\n```\n")
+	if strings.Contains(out, "⎘") {
+		t.Error("one-shot rendering should not contain the pager copy icon")
+	}
 	if !strings.Contains(out, "    foo") {
 		t.Error("code block should be indented by 4 spaces")
 	}
 	if !strings.Contains(out, "    bar") {
 		t.Error("code block should be indented by 4 spaces")
+	}
+}
+
+func TestFencedCodeBlockRecordsPagerCopyPayload(t *testing.T) {
+	result, err := RenderDocument([]byte("```go\nfoo()\nbar()\n```\n"), 80, false)
+	if err != nil {
+		t.Fatalf("RenderDocument() error = %v", err)
+	}
+	if len(result.codeBlocks) != 1 {
+		t.Fatalf("codeBlocks = %#v, want one block", result.codeBlocks)
+	}
+	if result.codeBlocks[0].line != 0 {
+		t.Fatalf("code block line = %d, want 0", result.codeBlocks[0].line)
+	}
+	if got := string(result.codeBlocks[0].text); got != "foo()\nbar()\n" {
+		t.Fatalf("code block text = %q", got)
+	}
+}
+
+func TestFencedCodeBlockPagerLineAccountsForFrontMatter(t *testing.T) {
+	result, err := RenderDocument([]byte("---\ntitle: Example\n---\n```\nfoo\n```\n"), 80, false)
+	if err != nil {
+		t.Fatalf("RenderDocument() error = %v", err)
+	}
+	if len(result.codeBlocks) != 1 {
+		t.Fatalf("codeBlocks = %#v, want one block", result.codeBlocks)
+	}
+	if result.codeBlocks[0].line != 3 {
+		t.Fatalf("code block line = %d, want 3", result.codeBlocks[0].line)
 	}
 }
 

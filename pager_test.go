@@ -1,6 +1,8 @@
 package md
 
 import (
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -453,6 +455,85 @@ func TestHandleMouseScrollsOutlineSelection(t *testing.T) {
 
 	if p.outline.selected != 1 {
 		t.Fatalf("outline.selected = %d, want 1", p.outline.selected)
+	}
+}
+
+func TestRenderLineAddsCopyIconToCodeBlockGutter(t *testing.T) {
+	p := &pager{
+		lines:      []string{"    foo"},
+		plainLines: []string{"    foo"},
+		codeBlocks: []renderCodeBlock{{line: 0, text: []byte("foo\n")}},
+	}
+
+	got := p.renderLine(0)
+	if stripANSI(got) != "⎘   foo" {
+		t.Fatalf("stripANSI(renderLine(0)) = %q", stripANSI(got))
+	}
+}
+
+func TestRenderLineKeepsSelectionHighlightAfterCopyIcon(t *testing.T) {
+	p := &pager{
+		lines:      []string{"    foo"},
+		plainLines: []string{"    foo"},
+		codeBlocks: []renderCodeBlock{{line: 0, text: []byte("foo\n")}},
+		selection: selectionState{
+			active:  true,
+			anchor:  selectionCell{line: 0, col: 1},
+			current: selectionCell{line: 0, col: 7},
+		},
+	}
+
+	got := p.renderLine(0)
+	if strings.Count(got, p.selectionHighlightStart()) < 2 {
+		t.Fatalf("selection highlight was not restored after icon styling: %q", got)
+	}
+}
+
+func TestCodeBlockButtonAccountsForScrollPosition(t *testing.T) {
+	p := &pager{
+		height:     8,
+		topLine:    10,
+		lines:      make([]string, 30),
+		codeBlocks: []renderCodeBlock{{line: 12, text: []byte("foo\n")}},
+	}
+
+	block, ok := p.codeBlockButton(3, 1)
+	if !ok || string(block.text) != "foo\n" {
+		t.Fatalf("codeBlockButton() = %#v, %v", block, ok)
+	}
+	if _, ok := p.codeBlockButton(3, 2); ok {
+		t.Fatal("codeBlockButton() matched outside the icon column")
+	}
+}
+
+func TestHandleMouseCopiesCodeBlockWithOSC52(t *testing.T) {
+	tty, err := os.CreateTemp(t.TempDir(), "tty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tty.Close()
+
+	p := &pager{
+		tty:        tty,
+		height:     8,
+		lines:      []string{"    foo"},
+		codeBlocks: []renderCodeBlock{{line: 0, text: []byte("foo\n")}},
+	}
+	p.handleMouse(mouseEvent{button: 0, row: 1, col: 1, pressed: true})
+
+	if _, err := tty.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(tty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\x1b]52;c;Zm9vCg==\x07"
+	if string(got) != want {
+		t.Fatalf("clipboard sequence = %q, want %q", got, want)
+	}
+	if p.notice != "Copied code block" || p.noticeIsError {
+		t.Fatalf("notice = %q, error = %v", p.notice, p.noticeIsError)
 	}
 }
 

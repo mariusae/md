@@ -27,6 +27,12 @@ type RenderResult struct {
 	Output       string
 	Headings     []Heading
 	lineMappings []renderLineMapping
+	codeBlocks   []renderCodeBlock
+}
+
+type renderCodeBlock struct {
+	line int
+	text []byte
 }
 
 type sourceSpan struct {
@@ -82,6 +88,7 @@ func RenderDocumentWithStyle(source []byte, width int, osc8 bool, style RenderSt
 		Output:       buf.String(),
 		Headings:     append([]Heading(nil), ansiRenderer.headings...),
 		lineMappings: append([]renderLineMapping(nil), ansiRenderer.lineMappings...),
+		codeBlocks:   append([]renderCodeBlock(nil), ansiRenderer.codeBlocks...),
 	}
 	offsetRenderResult(&result, bodyOffset, 0)
 	if hasFrontMatter {
@@ -97,6 +104,9 @@ func RenderDocumentWithStyle(source []byte, width int, osc8 bool, style RenderSt
 func offsetRenderResult(result *RenderResult, sourceOffset, lineOffset int) {
 	for i := range result.Headings {
 		result.Headings[i].Line += lineOffset
+	}
+	for i := range result.codeBlocks {
+		result.codeBlocks[i].line += lineOffset
 	}
 	if sourceOffset == 0 {
 		return
@@ -260,6 +270,7 @@ type AnsiRenderer struct {
 	renderStyle     RenderStyle
 	lineMappings    []renderLineMapping
 	spanStack       []sourceSpan
+	codeBlocks      []renderCodeBlock
 }
 
 func NewAnsiRenderer(width int, osc8 bool, style RenderStyle) *AnsiRenderer {
@@ -799,6 +810,7 @@ func (r *AnsiRenderer) renderParagraph(w util.BufWriter, source []byte, node ast
 
 func (r *AnsiRenderer) renderCodeBlock(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
+		r.recordCodeBlock(source, node)
 		r.pushSourceSpan(blockSourceSpan(source, node))
 		lines := node.Lines()
 		for i := 0; i < lines.Len(); i++ {
@@ -816,6 +828,7 @@ func (r *AnsiRenderer) renderCodeBlock(w util.BufWriter, source []byte, node ast
 
 func (r *AnsiRenderer) renderFencedCodeBlock(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
+		r.recordCodeBlock(source, node)
 		r.pushSourceSpan(blockSourceSpan(source, node))
 		lines := node.Lines()
 		for i := 0; i < lines.Len(); i++ {
@@ -829,6 +842,19 @@ func (r *AnsiRenderer) renderFencedCodeBlock(w util.BufWriter, source []byte, no
 		return ast.WalkSkipChildren, nil
 	}
 	return ast.WalkContinue, nil
+}
+
+func (r *AnsiRenderer) recordCodeBlock(source []byte, node ast.Node) {
+	var text []byte
+	lines := node.Lines()
+	for i := 0; i < lines.Len(); i++ {
+		line := lines.At(i)
+		text = append(text, line.Value(source)...)
+	}
+	r.codeBlocks = append(r.codeBlocks, renderCodeBlock{
+		line: r.line,
+		text: text,
+	})
 }
 
 func (r *AnsiRenderer) renderBlockquote(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {

@@ -53,6 +53,7 @@ type pager struct {
 	headings      []Heading
 	lines         []string
 	lineMappings  []renderLineMapping
+	codeBlocks    []renderCodeBlock
 	plainLines    []string
 	topLine       int
 	searchQuery   string
@@ -322,7 +323,32 @@ func (p *pager) handleMouse(ev mouseEvent) {
 		return
 	}
 
+	if ev.pressed && ev.baseButton() == 0 {
+		if block, ok := p.codeBlockButton(ev.row, ev.col); ok {
+			p.selection = selectionState{}
+			if err := p.copyToClipboard(block.text); err != nil {
+				p.setNotice(err.Error(), true)
+			} else {
+				p.setNotice("Copied code block", false)
+			}
+			return
+		}
+	}
+
 	p.handleSelectionMouse(ev)
+}
+
+func (p *pager) codeBlockButton(row, col int) (renderCodeBlock, bool) {
+	if col != 1 || row < 1 || row > p.viewHeight() {
+		return renderCodeBlock{}, false
+	}
+	line := p.topLine + row - 1
+	for _, block := range p.codeBlocks {
+		if block.line == line {
+			return block, true
+		}
+	}
+	return renderCodeBlock{}, false
 }
 
 func (p *pager) handleSelectionMouse(ev mouseEvent) {
@@ -841,6 +867,7 @@ func (p *pager) rebuild() error {
 	if text == "" {
 		p.lines = nil
 		p.lineMappings = nil
+		p.codeBlocks = nil
 		p.plainLines = nil
 		p.headings = nil
 		p.topLine = 0
@@ -851,6 +878,7 @@ func (p *pager) rebuild() error {
 
 	p.lines = strings.Split(text, "\n")
 	p.lineMappings = append([]renderLineMapping(nil), result.lineMappings...)
+	p.codeBlocks = append([]renderCodeBlock(nil), result.codeBlocks...)
 	if len(p.lineMappings) > len(p.lines) {
 		p.lineMappings = p.lineMappings[:len(p.lines)]
 	}
@@ -1118,6 +1146,12 @@ func (p *pager) outlineCursorPosition() (int, int) {
 
 func (p *pager) renderLine(lineIdx int) string {
 	line := p.lines[lineIdx]
+	for _, block := range p.codeBlocks {
+		if block.line == lineIdx {
+			line = replaceVisibleRune(line, 0, Dim+"⎘"+Reset)
+			break
+		}
+	}
 	if p.searchQuery != "" {
 		line = highlightSearchMatches(line, p.plainLines[lineIdx], p.searchQuery, p.highlightStart())
 	}
@@ -2323,6 +2357,36 @@ func highlightVisibleRange(rendered string, start, end int, startSeq string) str
 		return rendered
 	}
 	return highlightVisibleRanges(rendered, []matchRange{{start: start, end: end}}, startSeq)
+}
+
+func replaceVisibleRune(rendered string, position int, replacement string) string {
+	if position < 0 || replacement == "" {
+		return rendered
+	}
+
+	var out strings.Builder
+	runePos := 0
+	for i := 0; i < len(rendered); {
+		if rendered[i] == 0x1b {
+			seq, _, next := consumeEscapeSequence(rendered, i)
+			if seq == "" || next <= i {
+				break
+			}
+			out.WriteString(seq)
+			i = next
+			continue
+		}
+
+		rn, size := utf8.DecodeRuneInString(rendered[i:])
+		if runePos == position {
+			out.WriteString(replacement)
+		} else {
+			out.WriteRune(rn)
+		}
+		i += size
+		runePos++
+	}
+	return out.String()
 }
 
 func highlightVisibleRanges(rendered string, matches []matchRange, startSeq string) string {
