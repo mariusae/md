@@ -28,6 +28,31 @@ func TestParseOSCColorRGBA(t *testing.T) {
 	}
 }
 
+func TestCodeBlockTintUsesIonHUDAlphaValues(t *testing.T) {
+	t.Setenv("COLORTERM", "")
+	t.Setenv("TERM", "xterm-256color")
+	tests := []struct {
+		name string
+		bg   rgbColor
+		want float64
+	}{
+		{name: "light", bg: rgbColor{r: 255, g: 255, b: 255}, want: 0.04},
+		{name: "dark", bg: rgbColor{}, want: 0.12},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := subtleTintAlpha(tt.bg); got != tt.want {
+				t.Fatalf("subtleTintAlpha(%#v) = %v, want %v", tt.bg, got, tt.want)
+			}
+			theme := deriveTintTheme(tt.bg)
+			if theme.codeBlockBG != theme.statusBG {
+				t.Fatalf("code block tint %q does not match subtle HUD tint %q", theme.codeBlockBG, theme.statusBG)
+			}
+		})
+	}
+}
+
 func TestStripANSI(t *testing.T) {
 	input := Bold + "hello" + Reset + " " + OSC8Start("https://example.com") + "world" + OSC8End
 	if got := stripANSI(input); got != "hello world" {
@@ -458,7 +483,7 @@ func TestHandleMouseScrollsOutlineSelection(t *testing.T) {
 	}
 }
 
-func TestRenderLineAddsCopyIconToCodeBlockGutter(t *testing.T) {
+func TestRenderLineAddsCopyIconToCodeBlockLeftGutter(t *testing.T) {
 	p := &pager{
 		lines:      []string{"    foo"},
 		plainLines: []string{"    foo"},
@@ -466,7 +491,7 @@ func TestRenderLineAddsCopyIconToCodeBlockGutter(t *testing.T) {
 	}
 
 	got := p.renderLine(0)
-	if stripANSI(got) != "⎘   foo" {
+	if stripANSI(got) != " ⎘  foo" {
 		t.Fatalf("stripANSI(renderLine(0)) = %q", stripANSI(got))
 	}
 }
@@ -497,11 +522,11 @@ func TestCodeBlockButtonAccountsForScrollPosition(t *testing.T) {
 		codeBlocks: []renderCodeBlock{{line: 12, text: []byte("foo\n")}},
 	}
 
-	block, ok := p.codeBlockButton(3, 1)
+	block, ok := p.codeBlockButton(3, 2)
 	if !ok || string(block.text) != "foo\n" {
 		t.Fatalf("codeBlockButton() = %#v, %v", block, ok)
 	}
-	if _, ok := p.codeBlockButton(3, 2); ok {
+	if _, ok := p.codeBlockButton(3, 1); ok {
 		t.Fatal("codeBlockButton() matched outside the icon column")
 	}
 }
@@ -519,7 +544,7 @@ func TestHandleMouseCopiesCodeBlockWithOSC52(t *testing.T) {
 		lines:      []string{"    foo"},
 		codeBlocks: []renderCodeBlock{{line: 0, text: []byte("foo\n")}},
 	}
-	p.handleMouse(mouseEvent{button: 0, row: 1, col: 1, pressed: true})
+	p.handleMouse(mouseEvent{button: 0, row: 1, col: 2, pressed: true})
 
 	if _, err := tty.Seek(0, 0); err != nil {
 		t.Fatal(err)

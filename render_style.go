@@ -12,6 +12,7 @@ import (
 
 type RenderStyle struct {
 	BlockquoteBG string
+	CodeBlockBG  string
 	HighlightBG  string
 }
 
@@ -29,6 +30,7 @@ func DetectRenderStyle() (RenderStyle, error) {
 func (t tintTheme) renderStyle() RenderStyle {
 	return RenderStyle{
 		BlockquoteBG: t.blockquoteBG,
+		CodeBlockBG:  t.codeBlockBG,
 		HighlightBG:  t.markBG,
 	}
 }

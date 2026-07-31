@@ -812,12 +812,7 @@ func (r *AnsiRenderer) renderCodeBlock(w util.BufWriter, source []byte, node ast
 	if entering {
 		r.recordCodeBlock(source, node)
 		r.pushSourceSpan(blockSourceSpan(source, node))
-		lines := node.Lines()
-		for i := 0; i < lines.Len(); i++ {
-			line := lines.At(i)
-			r.writeString(w, "    ")
-			r.writeBytes(w, line.Value(source))
-		}
+		r.renderCodeLines(w, source, node)
 		r.popSourceSpan()
 		r.writeNewline(w)
 		r.col = 0
@@ -830,18 +825,46 @@ func (r *AnsiRenderer) renderFencedCodeBlock(w util.BufWriter, source []byte, no
 	if entering {
 		r.recordCodeBlock(source, node)
 		r.pushSourceSpan(blockSourceSpan(source, node))
-		lines := node.Lines()
-		for i := 0; i < lines.Len(); i++ {
-			line := lines.At(i)
-			r.writeString(w, "    ")
-			r.writeBytes(w, line.Value(source))
-		}
+		r.renderCodeLines(w, source, node)
 		r.popSourceSpan()
 		r.writeNewline(w)
 		r.col = 0
 		return ast.WalkSkipChildren, nil
 	}
 	return ast.WalkContinue, nil
+}
+
+func (r *AnsiRenderer) renderCodeLines(w util.BufWriter, source []byte, node ast.Node) {
+	lines := node.Lines()
+	for i := 0; i < lines.Len(); i++ {
+		line := lines.At(i)
+		value := line.Value(source)
+		r.writeString(w, "    ")
+		if r.renderStyle.CodeBlockBG == "" {
+			r.writeBytes(w, value)
+			continue
+		}
+
+		content, ending := splitLineEnding(value)
+		r.writeString(w, r.renderStyle.CodeBlockBG)
+		r.writeBytes(w, content)
+		padding := r.width - 4 - utf8.RuneCount(content)
+		if padding > 0 {
+			r.writeString(w, strings.Repeat(" ", padding))
+		}
+		r.writeString(w, Reset)
+		r.writeBytes(w, ending)
+	}
+}
+
+func splitLineEnding(line []byte) (content, ending []byte) {
+	if bytes.HasSuffix(line, []byte("\r\n")) {
+		return line[:len(line)-2], line[len(line)-2:]
+	}
+	if bytes.HasSuffix(line, []byte("\n")) {
+		return line[:len(line)-1], line[len(line)-1:]
+	}
+	return line, nil
 }
 
 func (r *AnsiRenderer) recordCodeBlock(source []byte, node ast.Node) {
@@ -851,8 +874,12 @@ func (r *AnsiRenderer) recordCodeBlock(source []byte, node ast.Node) {
 		line := lines.At(i)
 		text = append(text, line.Value(source)...)
 	}
+	buttonLine := r.line
+	if lines.Len() > 0 {
+		buttonLine += (lines.Len() - 1) / 2
+	}
 	r.codeBlocks = append(r.codeBlocks, renderCodeBlock{
-		line: r.line,
+		line: buttonLine,
 		text: text,
 	})
 }
