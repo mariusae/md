@@ -839,14 +839,15 @@ func (r *AnsiRenderer) renderCodeLines(w util.BufWriter, source []byte, node ast
 	for i := 0; i < lines.Len(); i++ {
 		line := lines.At(i)
 		value := line.Value(source)
-		r.writeString(w, "    ")
 		if r.renderStyle.CodeBlockBG == "" {
+			r.writeString(w, "    ")
 			r.writeBytes(w, value)
 			continue
 		}
 
 		content, ending := splitLineEnding(value)
 		r.writeString(w, r.renderStyle.CodeBlockBG)
+		r.writeString(w, "    ")
 		r.writeBytes(w, content)
 		padding := r.width - 4 - utf8.RuneCount(content)
 		if padding > 0 {
@@ -874,12 +875,8 @@ func (r *AnsiRenderer) recordCodeBlock(source []byte, node ast.Node) {
 		line := lines.At(i)
 		text = append(text, line.Value(source)...)
 	}
-	buttonLine := r.line
-	if lines.Len() > 0 {
-		buttonLine += (lines.Len() - 1) / 2
-	}
 	r.codeBlocks = append(r.codeBlocks, renderCodeBlock{
-		line: buttonLine,
+		line: r.line,
 		text: text,
 	})
 }

@@ -484,15 +484,20 @@ func TestHandleMouseScrollsOutlineSelection(t *testing.T) {
 }
 
 func TestRenderLineAddsCopyIconToCodeBlockLeftGutter(t *testing.T) {
+	bg := "\033[48;2;1;2;3m"
 	p := &pager{
-		lines:      []string{"    foo"},
+		lines:      []string{bg + "    foo" + Reset},
 		plainLines: []string{"    foo"},
 		codeBlocks: []renderCodeBlock{{line: 0, text: []byte("foo\n")}},
+		theme:      tintTheme{codeBlockBG: bg},
 	}
 
 	got := p.renderLine(0)
-	if stripANSI(got) != " ⎘  foo" {
+	if stripANSI(got) != "⎘   foo" {
 		t.Fatalf("stripANSI(renderLine(0)) = %q", stripANSI(got))
+	}
+	if !strings.Contains(got, bg+Dim+"⎘"+Reset+bg+"   foo") {
+		t.Fatalf("copy icon or tinted background is misplaced: %q", got)
 	}
 }
 
@@ -522,11 +527,11 @@ func TestCodeBlockButtonAccountsForScrollPosition(t *testing.T) {
 		codeBlocks: []renderCodeBlock{{line: 12, text: []byte("foo\n")}},
 	}
 
-	block, ok := p.codeBlockButton(3, 2)
+	block, ok := p.codeBlockButton(3, 1)
 	if !ok || string(block.text) != "foo\n" {
 		t.Fatalf("codeBlockButton() = %#v, %v", block, ok)
 	}
-	if _, ok := p.codeBlockButton(3, 1); ok {
+	if _, ok := p.codeBlockButton(3, 2); ok {
 		t.Fatal("codeBlockButton() matched outside the icon column")
 	}
 }
@@ -544,7 +549,7 @@ func TestHandleMouseCopiesCodeBlockWithOSC52(t *testing.T) {
 		lines:      []string{"    foo"},
 		codeBlocks: []renderCodeBlock{{line: 0, text: []byte("foo\n")}},
 	}
-	p.handleMouse(mouseEvent{button: 0, row: 1, col: 2, pressed: true})
+	p.handleMouse(mouseEvent{button: 0, row: 1, col: 1, pressed: true})
 
 	if _, err := tty.Seek(0, 0); err != nil {
 		t.Fatal(err)

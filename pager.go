@@ -340,7 +340,7 @@ func (p *pager) handleMouse(ev mouseEvent) {
 }
 
 func (p *pager) codeBlockButton(row, col int) (renderCodeBlock, bool) {
-	if col != 2 || row < 1 || row > p.viewHeight() {
+	if col != 1 || row < 1 || row > p.viewHeight() {
 		return renderCodeBlock{}, false
 	}
 	line := p.topLine + row - 1
@@ -1149,7 +1149,7 @@ func (p *pager) renderLine(lineIdx int) string {
 	line := p.lines[lineIdx]
 	for _, block := range p.codeBlocks {
 		if block.line == lineIdx {
-			line = replaceVisibleRune(line, 1, Dim+"⎘"+Reset)
+			line = replaceVisibleRune(line, 0, Dim+"⎘"+Reset+p.theme.codeBlockBG)
 			break
 		}
 	}

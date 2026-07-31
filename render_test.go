@@ -84,15 +84,12 @@ func TestFencedCodeBlock(t *testing.T) {
 	}
 }
 
-func TestFencedCodeBlockTintsFromCodeColumnThroughPageWidth(t *testing.T) {
+func TestFencedCodeBlockTintsFullPageWidth(t *testing.T) {
 	out := renderStyledOpts("```\nfoo\nbar\n```\n", 12, false, testRenderStyle)
 	lines := strings.Split(out, "\n")
 	for i, line := range lines[:2] {
-		if !strings.HasPrefix(line, "    "+testRenderStyle.CodeBlockBG) {
-			t.Fatalf("code line %d does not start tint after its gutter: %q", i, line)
-		}
-		if strings.HasPrefix(line, testRenderStyle.CodeBlockBG) {
-			t.Fatalf("code line %d tinted its gutter: %q", i, line)
+		if !strings.HasPrefix(line, testRenderStyle.CodeBlockBG+"    ") {
+			t.Fatalf("code line %d does not start with tint: %q", i, line)
 		}
 		if got := stripANSI(line); got != "    "+[]string{"foo", "bar"}[i]+"     " {
 			t.Fatalf("plain code line %d = %q", i, got)
@@ -116,7 +113,7 @@ func TestFencedCodeBlockRecordsPagerCopyPayload(t *testing.T) {
 	}
 }
 
-func TestFencedCodeBlockCentersPagerCopyIconLine(t *testing.T) {
+func TestFencedCodeBlockPlacesPagerCopyIconOnFirstLine(t *testing.T) {
 	result, err := RenderDocument([]byte("```\none\ntwo\nthree\n```\n"), 80, false)
 	if err != nil {
 		t.Fatalf("RenderDocument() error = %v", err)
@@ -124,8 +121,8 @@ func TestFencedCodeBlockCentersPagerCopyIconLine(t *testing.T) {
 	if len(result.codeBlocks) != 1 {
 		t.Fatalf("codeBlocks = %#v, want one block", result.codeBlocks)
 	}
-	if result.codeBlocks[0].line != 1 {
-		t.Fatalf("code block icon line = %d, want 1", result.codeBlocks[0].line)
+	if result.codeBlocks[0].line != 0 {
+		t.Fatalf("code block icon line = %d, want 0", result.codeBlocks[0].line)
 	}
 }
 
