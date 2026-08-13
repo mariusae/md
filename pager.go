@@ -2,6 +2,7 @@ package md
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -34,6 +35,7 @@ const (
 	enableMouseReporting  = "\033[?1000h\033[?1002h\033[?1006h"
 	disableMouseReporting = "\033[?1006l\033[?1002l\033[?1000l"
 	queryBackgroundColor  = "\033]11;?\033\\"
+	changeFlashDuration   = 2 * time.Second
 )
 
 type PagerConfig struct {
@@ -44,29 +46,31 @@ type PagerConfig struct {
 }
 
 type pager struct {
-	tty           *os.File
-	cfg           PagerConfig
-	width         int
-	height        int
-	source        []byte
-	sourceModTime time.Time
-	headings      []Heading
-	lines         []string
-	lineMappings  []renderLineMapping
-	codeBlocks    []renderCodeBlock
-	plainLines    []string
-	topLine       int
-	searchQuery   string
-	searchMatches []int
-	searchIndex   int
-	promptActive  bool
-	promptValue   string
-	promptCursor  int
-	notice        string
-	noticeIsError bool
-	theme         tintTheme
-	outline       outlineState
-	selection     selectionState
+	tty              *os.File
+	cfg              PagerConfig
+	width            int
+	height           int
+	source           []byte
+	sourceModTime    time.Time
+	headings         []Heading
+	lines            []string
+	lineMappings     []renderLineMapping
+	codeBlocks       []renderCodeBlock
+	plainLines       []string
+	topLine          int
+	searchQuery      string
+	searchMatches    []int
+	searchIndex      int
+	promptActive     bool
+	promptValue      string
+	promptCursor     int
+	notice           string
+	noticeIsError    bool
+	theme            tintTheme
+	outline          outlineState
+	selection        selectionState
+	changeFlash      map[int][]matchRange
+	changeFlashUntil time.Time
 }
 
 type tintTheme struct {
@@ -243,6 +247,13 @@ func RunPager(cfg PagerConfig) error {
 
 	timeTicker := time.NewTicker(15 * time.Second)
 	defer timeTicker.Stop()
+	var flashTimer *time.Timer
+	var flashTimerCh <-chan time.Time
+	defer func() {
+		if flashTimer != nil {
+			flashTimer.Stop()
+		}
+	}()
 
 	p.requestBackground()
 	if err := p.draw(); err != nil {
@@ -277,10 +288,32 @@ func RunPager(cfg PagerConfig) error {
 				}
 			}
 		case <-timeTicker.C:
+		case <-flashTimerCh:
+			p.clearChangeFlash()
+			flashTimerCh = nil
 		}
 
+		p.clearExpiredChangeFlash(timeNow())
 		if err := p.draw(); err != nil {
 			return err
+		}
+		if !p.changeFlashUntil.IsZero() {
+			delay := time.Until(p.changeFlashUntil)
+			if delay < time.Millisecond {
+				delay = time.Millisecond
+			}
+			if flashTimer == nil {
+				flashTimer = time.NewTimer(delay)
+			} else {
+				if !flashTimer.Stop() {
+					select {
+					case <-flashTimer.C:
+					default:
+					}
+				}
+				flashTimer.Reset(delay)
+			}
+			flashTimerCh = flashTimer.C
 		}
 	}
 }
@@ -812,6 +845,9 @@ func (p *pager) reload(initial bool) error {
 		return nil
 	}
 
+	oldSource := p.source
+	oldPlainLines := append([]string(nil), p.plainLines...)
+	changed := !initial && !bytes.Equal(oldSource, source)
 	p.source = source
 	p.sourceModTime = modTime
 	if err := p.rebuild(); err != nil {
@@ -824,6 +860,14 @@ func (p *pager) reload(initial bool) error {
 
 	if p.noticeIsError {
 		p.clearNotice()
+	}
+	if changed {
+		p.changeFlash = changedRenderedRanges(oldPlainLines, p.plainLines)
+		if len(p.changeFlash) > 0 {
+			p.changeFlashUntil = timeNow().Add(changeFlashDuration)
+		} else {
+			p.changeFlashUntil = time.Time{}
+		}
 	}
 	return nil
 }
@@ -1161,7 +1205,21 @@ func (p *pager) renderLine(lineIdx int) string {
 			line = highlightVisibleRange(line, start, end, p.selectionHighlightStart())
 		}
 	}
+	if ranges := p.changeFlash[lineIdx]; len(ranges) > 0 {
+		line = highlightVisibleRanges(line, ranges, p.highlightStart())
+	}
 	return line
+}
+
+func (p *pager) clearExpiredChangeFlash(now time.Time) {
+	if !p.changeFlashUntil.IsZero() && !now.Before(p.changeFlashUntil) {
+		p.clearChangeFlash()
+	}
+}
+
+func (p *pager) clearChangeFlash() {
+	p.changeFlash = nil
+	p.changeFlashUntil = time.Time{}
 }
 
 func (p *pager) highlightStart() string {
@@ -2344,6 +2402,148 @@ func containsInt(values []int, want int) bool {
 type matchRange struct {
 	start int
 	end   int
+}
+
+type linePair struct {
+	old int
+	new int
+}
+
+// changedRenderedRanges identifies the visible portions of the newly rendered
+// document that differ from the previous render. Matching whole lines first
+// prevents an insertion near the top from making every following line flash.
+func changedRenderedRanges(oldLines, newLines []string) map[int][]matchRange {
+	if slicesOfStringsEqual(oldLines, newLines) {
+		return nil
+	}
+
+	changed := make(map[int][]matchRange)
+	pairs := matchingLinePairs(oldLines, newLines)
+	oldAt, newAt := 0, 0
+	for _, pair := range append(pairs, linePair{old: len(oldLines), new: len(newLines)}) {
+		addChangedRenderedBlock(changed, oldLines, newLines, oldAt, pair.old, newAt, pair.new)
+		oldAt = pair.old + 1
+		newAt = pair.new + 1
+	}
+	return changed
+}
+
+func addChangedRenderedBlock(changed map[int][]matchRange, oldLines, newLines []string, oldStart, oldEnd, newStart, newEnd int) {
+	oldCount := oldEnd - oldStart
+	newCount := newEnd - newStart
+	paired := min(oldCount, newCount)
+	for i := 0; i < paired; i++ {
+		if r, ok := changedRuneRange(oldLines[oldStart+i], newLines[newStart+i]); ok {
+			changed[newStart+i] = []matchRange{r}
+		}
+	}
+	for i := paired; i < newCount; i++ {
+		width := utf8.RuneCountInString(newLines[newStart+i])
+		if width > 0 {
+			changed[newStart+i] = []matchRange{{start: 0, end: width}}
+		}
+	}
+
+	// A deletion has no new text to color, so flash the closest surviving line.
+	if oldCount > newCount && len(newLines) > 0 {
+		line := min(newStart+paired, len(newLines)-1)
+		width := utf8.RuneCountInString(newLines[line])
+		if width > 0 {
+			changed[line] = []matchRange{{start: 0, end: width}}
+		}
+	}
+}
+
+func changedRuneRange(oldLine, newLine string) (matchRange, bool) {
+	oldRunes := []rune(oldLine)
+	newRunes := []rune(newLine)
+	prefix := 0
+	for prefix < len(oldRunes) && prefix < len(newRunes) && oldRunes[prefix] == newRunes[prefix] {
+		prefix++
+	}
+
+	oldSuffix, newSuffix := len(oldRunes), len(newRunes)
+	for oldSuffix > prefix && newSuffix > prefix && oldRunes[oldSuffix-1] == newRunes[newSuffix-1] {
+		oldSuffix--
+		newSuffix--
+	}
+	if prefix < newSuffix {
+		return matchRange{start: prefix, end: newSuffix}, true
+	}
+	if len(newRunes) == 0 {
+		return matchRange{}, false
+	}
+	// For a deletion within a line, color one adjacent surviving character.
+	start := min(prefix, len(newRunes)-1)
+	return matchRange{start: start, end: start + 1}, true
+}
+
+func matchingLinePairs(oldLines, newLines []string) []linePair {
+	const maxLCSCells = 4_000_000
+	if len(oldLines) > 0 && len(newLines) <= maxLCSCells/len(oldLines) {
+		cols := len(newLines) + 1
+		dp := make([]uint32, (len(oldLines)+1)*cols)
+		for i := len(oldLines) - 1; i >= 0; i-- {
+			for j := len(newLines) - 1; j >= 0; j-- {
+				idx := i*cols + j
+				if oldLines[i] == newLines[j] {
+					dp[idx] = dp[(i+1)*cols+j+1] + 1
+				} else {
+					dp[idx] = dp[(i+1)*cols+j]
+					if dp[i*cols+j+1] > dp[idx] {
+						dp[idx] = dp[i*cols+j+1]
+					}
+				}
+			}
+		}
+
+		pairs := make([]linePair, 0, dp[0])
+		for i, j := 0, 0; i < len(oldLines) && j < len(newLines); {
+			switch {
+			case oldLines[i] == newLines[j]:
+				pairs = append(pairs, linePair{old: i, new: j})
+				i++
+				j++
+			case dp[(i+1)*cols+j] >= dp[i*cols+j+1]:
+				i++
+			default:
+				j++
+			}
+		}
+		return pairs
+	}
+
+	// Bound memory for very large documents while still preserving unchanged
+	// prefixes and suffixes, which are the common live-edit case.
+	var pairs []linePair
+	prefix := 0
+	for prefix < len(oldLines) && prefix < len(newLines) && oldLines[prefix] == newLines[prefix] {
+		pairs = append(pairs, linePair{old: prefix, new: prefix})
+		prefix++
+	}
+	oldAt, newAt := len(oldLines)-1, len(newLines)-1
+	var suffix []linePair
+	for oldAt >= prefix && newAt >= prefix && oldLines[oldAt] == newLines[newAt] {
+		suffix = append(suffix, linePair{old: oldAt, new: newAt})
+		oldAt--
+		newAt--
+	}
+	for i := len(suffix) - 1; i >= 0; i-- {
+		pairs = append(pairs, suffix[i])
+	}
+	return pairs
+}
+
+func slicesOfStringsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func highlightSearchMatches(rendered, plain, query, startSeq string) string {

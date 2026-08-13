@@ -92,6 +92,66 @@ func TestWatchFilesWithoutPaths(t *testing.T) {
 	closeFn()
 }
 
+func TestChangedRenderedRangesTracksEditedAndInsertedText(t *testing.T) {
+	oldLines := []string{"# Title", "hello world", "tail"}
+	newLines := []string{"# Title", "hello brave world", "new line", "tail"}
+
+	got := changedRenderedRanges(oldLines, newLines)
+	assertMatchRange(t, got[1], matchRange{start: 6, end: 12})
+	assertMatchRange(t, got[2], matchRange{start: 0, end: 8})
+	if _, ok := got[3]; ok {
+		t.Fatal("unchanged tail line should not flash")
+	}
+}
+
+func TestChangedRenderedRangesMarksNeighborForDeletion(t *testing.T) {
+	got := changedRenderedRanges(
+		[]string{"before", "removed", "after"},
+		[]string{"before", "after"},
+	)
+
+	assertMatchRange(t, got[1], matchRange{start: 0, end: 5})
+}
+
+func TestReloadFlashesChangedRenderedText(t *testing.T) {
+	path := t.TempDir() + "/document.md"
+	if err := os.WriteFile(path, []byte("hello world\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := &pager{cfg: PagerConfig{Paths: []string{path}}, width: 80, height: 24}
+	if err := p.reload(true); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.changeFlash) != 0 {
+		t.Fatal("initial render should not flash")
+	}
+
+	if err := os.WriteFile(path, []byte("hello brave world\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.reload(false); err != nil {
+		t.Fatal(err)
+	}
+	if p.changeFlashUntil.IsZero() {
+		t.Fatal("changed render did not start a flash")
+	}
+	if rendered := p.renderLine(0); !strings.Contains(rendered, p.highlightStart()+"brave") {
+		t.Fatalf("changed text was not highlighted: %q", rendered)
+	}
+
+	p.clearExpiredChangeFlash(p.changeFlashUntil)
+	if len(p.changeFlash) != 0 || !p.changeFlashUntil.IsZero() {
+		t.Fatal("expired flash was not cleared")
+	}
+}
+
+func assertMatchRange(t *testing.T, got []matchRange, want matchRange) {
+	t.Helper()
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("ranges = %#v, want %#v", got, []matchRange{want})
+	}
+}
+
 func TestPromptControlUDeletesToStart(t *testing.T) {
 	p := &pager{
 		promptActive: true,
