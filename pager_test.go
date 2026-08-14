@@ -92,6 +92,29 @@ func TestWatchFilesWithoutPaths(t *testing.T) {
 	closeFn()
 }
 
+func TestQuestionMarkTogglesHelpScreen(t *testing.T) {
+	p := &pager{outline: outlineState{active: true}}
+
+	p.handleKey(keyEvent{kind: keyRune, ch: '?'})
+	if !p.helpActive {
+		t.Fatal("? did not open help")
+	}
+	if p.outline.filter != "" {
+		t.Fatal("? was inserted into the outline filter")
+	}
+
+	p.handleKey(keyEvent{kind: keyRune, ch: '?'})
+	if p.helpActive {
+		t.Fatal("? did not close help")
+	}
+}
+
+func TestHelpFitsStandardTerminalHeight(t *testing.T) {
+	if got := len(pagerHelpLines()); got > 24 {
+		t.Fatalf("help has %d rows; want at most 24", got)
+	}
+}
+
 func TestChangedRenderedRangesTracksEditedAndInsertedText(t *testing.T) {
 	oldLines := []string{"# Title", "hello world", "tail"}
 	newLines := []string{"# Title", "hello brave world", "new line", "tail"}

@@ -71,6 +71,7 @@ type pager struct {
 	selection        selectionState
 	changeFlash      map[int][]matchRange
 	changeFlashUntil time.Time
+	helpActive       bool
 }
 
 type tintTheme struct {
@@ -345,6 +346,10 @@ func (p *pager) handleEvent(ev inputEvent) (bool, error) {
 }
 
 func (p *pager) handleMouse(ev mouseEvent) {
+	if p.helpActive {
+		return
+	}
+
 	if p.outline.active && p.mouseInOutline(ev.row, ev.col) {
 		if dir, ok := ev.verticalWheelDirection(); ok {
 			p.moveOutlineSelection(dir)
@@ -680,6 +685,19 @@ func mergeOrderedSourceSpans(spans []sourceSpan) []sourceSpan {
 }
 
 func (p *pager) handleKey(ev keyEvent) bool {
+	if p.helpActive {
+		switch {
+		case ev.ch == 3:
+			return true
+		case ev.kind == keyEscape || ev.ch == '?' || ev.ch == 'q':
+			p.helpActive = false
+		}
+		return false
+	}
+	if ev.kind == keyRune && ev.ch == '?' {
+		p.helpActive = true
+		return false
+	}
 	if p.outline.active {
 		return p.handleOutlineKey(ev)
 	}
@@ -946,6 +964,10 @@ func (p *pager) renderWidth() int {
 }
 
 func (p *pager) draw() error {
+	if p.helpActive {
+		return p.drawHelp()
+	}
+
 	var out strings.Builder
 	viewHeight := p.viewHeight()
 
@@ -984,6 +1006,63 @@ func (p *pager) draw() error {
 
 	_, err := io.WriteString(p.tty, out.String())
 	return err
+}
+
+func (p *pager) drawHelp() error {
+	lines := pagerHelpLines()
+	blockWidth := 0
+	for _, line := range lines {
+		blockWidth = max(blockWidth, visibleWidth(line))
+	}
+	blockWidth = min(blockWidth, p.width)
+	top := max(1, (p.height-len(lines))/2+1)
+	left := max(1, (p.width-blockWidth)/2+1)
+
+	var out strings.Builder
+	out.WriteString(hideCursor)
+	for row := 1; row <= p.height; row++ {
+		out.WriteString(cursorTo(row, 1))
+		out.WriteString("\033[2K")
+	}
+	for i, line := range lines {
+		row := top + i
+		if row < 1 || row > p.height {
+			continue
+		}
+		out.WriteString(cursorTo(row, left))
+		out.WriteString(fitToWidth(line, blockWidth))
+	}
+	_, err := io.WriteString(p.tty, out.String())
+	return err
+}
+
+func pagerHelpLines() []string {
+	return []string{
+		Bold + "md keyboard shortcuts" + Reset,
+		Bold + "Navigation" + Reset,
+		"j / ↓ / Enter / Ctrl-N     down one line",
+		"k / ↑ / Ctrl-P             up one line",
+		"d / u half screen; Space / Ctrl-V / PgDn page down",
+		"b / Alt-V / PgUp           up one screen",
+		"g / Home / Alt-< first; G / End / Alt-> last",
+		"",
+		Bold + "Document" + Reset,
+		"Ctrl-R                     open outline",
+		"r / Ctrl-L reload; ? help",
+		"/                          search; n / N next / previous",
+		"q / Ctrl-C                 quit",
+		"",
+		Bold + "Search and outline editing" + Reset,
+		"←/→ or Ctrl-B/F move; Home/End or Ctrl-A/E to ends",
+		"Alt-B/F by word; Backspace; Delete/Ctrl-D",
+		"Ctrl-W delete word; Ctrl-U/K delete to start/end",
+		"Enter accept; Ctrl-G cancel",
+		Bold + "Outline navigation" + Reset,
+		"j/k or Ctrl-N/P; PgDn/Ctrl-V; PgUp/b/Alt-V",
+		"g/G or Home/End; type to filter",
+		"Enter/Esc/Ctrl-G/Ctrl-R close outline; Ctrl-C quits",
+		"? / Esc / q closes help",
+	}
 }
 
 func (p *pager) renderBar(text string, prompt bool) string {
