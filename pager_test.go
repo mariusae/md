@@ -900,6 +900,39 @@ func TestFitToWidthPreservesANSI(t *testing.T) {
 	}
 }
 
+func TestVisibleWidthCountsButterflyAsTwoCells(t *testing.T) {
+	if got := visibleWidth("Monarch 🦋"); got != 10 {
+		t.Fatalf("visibleWidth() = %d, want 10", got)
+	}
+}
+
+func TestFitToWidthAccountsForWideGlyphs(t *testing.T) {
+	got := fitToWidth("123🦋", 4)
+	if got != "1..." {
+		t.Fatalf("fitToWidth() = %q, want %q", got, "1...")
+	}
+	if width := visibleWidth(got); width != 4 {
+		t.Fatalf("fitted width = %d, want 4", width)
+	}
+}
+
+func TestStatusBarWithWideHeadingDoesNotOverflow(t *testing.T) {
+	p := &pager{
+		width:  24,
+		height: 8,
+		lines:  []string{"heading"},
+		cfg:    PagerConfig{Label: "README.md"},
+		headings: []Heading{
+			{Level: 1, Text: "Monarch 🦋", Line: 0},
+		},
+	}
+
+	got := p.renderStatusBar()
+	if width := visibleWidth(got); width != p.width {
+		t.Fatalf("status bar width = %d, want %d: %q", width, p.width, stripANSI(got))
+	}
+}
+
 func TestRenderTintedBlockPadsStyledTextToFullWidth(t *testing.T) {
 	got := renderTintedBlock(Bold+"abc"+Reset, "", 5)
 	if stripANSI(got) != "abc  " {

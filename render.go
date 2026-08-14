@@ -357,7 +357,7 @@ func (r *AnsiRenderer) writeWrapped(w util.BufWriter, text string) {
 
 	words := splitWords(text)
 	for _, word := range words {
-		wlen := len(word)
+		wlen := terminalWidth(word)
 		if wlen == 0 {
 			continue
 		}
@@ -555,7 +555,7 @@ func splitMappedTokens(text string, spans []sourceSpan) []mappedToken {
 		token := mappedToken{
 			text:  string(runes[i:j]),
 			space: space,
-			width: j - i,
+			width: terminalWidth(string(runes[i:j])),
 		}
 		if i < len(spans) {
 			end := min(j, len(spans))
@@ -849,7 +849,7 @@ func (r *AnsiRenderer) renderCodeLines(w util.BufWriter, source []byte, node ast
 		r.writeString(w, r.renderStyle.CodeBlockBG)
 		r.writeString(w, "    ")
 		r.writeBytes(w, content)
-		padding := r.width - 4 - utf8.RuneCount(content)
+		padding := r.width - 4 - terminalWidth(string(content))
 		if padding > 0 {
 			r.writeString(w, strings.Repeat(" ", padding))
 		}

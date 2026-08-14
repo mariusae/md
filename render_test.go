@@ -41,6 +41,13 @@ func TestHeadingBold(t *testing.T) {
 	}
 }
 
+func TestWideGlyphWrapsAtTerminalCellWidth(t *testing.T) {
+	out := stripANSI(renderOpts("Monarch 🦋\n", 9, false))
+	if !strings.Contains(out, "Monarch \n🦋") {
+		t.Fatalf("wide glyph did not wrap at terminal width: %q", out)
+	}
+}
+
 func TestBold(t *testing.T) {
 	out := render("**bold text**\n")
 	if !strings.Contains(out, Bold) {

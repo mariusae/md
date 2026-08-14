@@ -3,7 +3,6 @@ package md
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/yuin/goldmark/ast"
 	east "github.com/yuin/goldmark/extension/ast"
@@ -53,8 +52,8 @@ func (r *AnsiRenderer) renderTable(w util.BufWriter, source []byte, node ast.Nod
 	widths := make([]int, numCols)
 	for _, row := range rows {
 		for i, cell := range row {
-			if i < numCols && utf8.RuneCountInString(cell) > widths[i] {
-				widths[i] = utf8.RuneCountInString(cell)
+			if i < numCols && terminalWidth(cell) > widths[i] {
+				widths[i] = terminalWidth(cell)
 			}
 		}
 	}
@@ -106,7 +105,7 @@ func (r *AnsiRenderer) writeRow(w util.BufWriter, row []string, widths []int, al
 }
 
 func alignCell(text string, width int, align east.Alignment) string {
-	textLen := utf8.RuneCountInString(text)
+	textLen := terminalWidth(text)
 	pad := width - textLen
 	if pad < 0 {
 		pad = 0

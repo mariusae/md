@@ -1510,12 +1510,12 @@ func (p *pager) outlinePanelWidth() int {
 	width := 24
 	for _, idx := range p.outline.filtered {
 		heading := p.headings[idx]
-		candidate := 4 + (heading.Level-1)*2 + utf8.RuneCountInString(heading.Text)
+		candidate := 4 + (heading.Level-1)*2 + terminalWidth(heading.Text)
 		if candidate > width {
 			width = candidate
 		}
 	}
-	promptWidth := 4 + utf8.RuneCountInString(p.outline.filter)
+	promptWidth := 4 + terminalWidth(p.outline.filter)
 	if promptWidth > width {
 		width = promptWidth
 	}
@@ -2796,21 +2796,31 @@ func fitToWidthLeftPlainWithOffset(text string, width int) (string, int) {
 	}
 
 	runes := []rune(text)
-	if len(runes) <= width {
+	if terminalWidth(text) <= width {
 		return text, 0
 	}
-	if width <= 3 {
-		start := len(runes) - width
-		return string(runes[start:]), start
-	}
 
-	keep := width - 3
-	start := len(runes) - keep
-	return "..." + string(runes[start:]), start
+	prefix := "..."
+	keepWidth := width - 3
+	if width <= 3 {
+		prefix = ""
+		keepWidth = width
+	}
+	used := 0
+	start := len(runes)
+	for start > 0 {
+		runeWidth := terminalRuneWidth(runes[start-1])
+		if used+runeWidth > keepWidth {
+			break
+		}
+		used += runeWidth
+		start--
+	}
+	return prefix + string(runes[start:]), start
 }
 
 func visibleWidth(text string) int {
-	return utf8.RuneCountInString(stripANSI(text))
+	return terminalWidth(stripANSI(text))
 }
 
 func truncateVisible(text string, width int) string {
@@ -2838,8 +2848,12 @@ func truncateVisible(text string, width int) string {
 		}
 
 		r, size := utf8.DecodeRuneInString(text[i:])
+		runeWidth := terminalRuneWidth(r)
+		if visible+runeWidth > width {
+			break
+		}
 		out.WriteRune(r)
-		visible++
+		visible += runeWidth
 		i += size
 	}
 
