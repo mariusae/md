@@ -26,7 +26,8 @@ func main() {
 		return
 	}
 
-	if opts.pager {
+	outputIsTerminal := term.IsTerminal(int(os.Stdout.Fd()))
+	if shouldUsePager(opts.pager, outputIsTerminal) {
 		cfg := md.PagerConfig{
 			Paths: opts.paths,
 			Width: opts.width,
@@ -54,10 +55,9 @@ func main() {
 	}
 
 	width := 80
-	isTTY := false
+	isTTY := outputIsTerminal
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
 		width = w
-		isTTY = true
 	}
 	if opts.width > 0 {
 		width = opts.width
@@ -69,6 +69,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "md: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func shouldUsePager(explicit, outputIsTerminal bool) bool {
+	return explicit || outputIsTerminal
 }
 
 type options struct {
@@ -83,7 +87,7 @@ func parseArgs(args []string) (options, error) {
 	fs.SetOutput(io.Discard)
 
 	var opts options
-	fs.BoolVar(&opts.pager, "P", false, "launch the built-in pager")
+	fs.BoolVar(&opts.pager, "P", false, "force the built-in pager")
 	fs.BoolVar(&opts.help, "help", false, "show help")
 	fs.IntVar(&opts.width, "w", 0, "render width in characters")
 	if err := fs.Parse(args); err != nil {
@@ -109,7 +113,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: md [options] [file ...]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options:")
-	fmt.Fprintln(w, "  -P          launch the built-in pager")
+	fmt.Fprintln(w, "  -P          force the built-in pager (automatic for terminal output)")
 	fmt.Fprintln(w, "  -w width    render width in characters")
 	fmt.Fprintln(w, "  -help       show help")
 }
