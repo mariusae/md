@@ -557,6 +557,20 @@ func TestParseSGRMouseEventScrollUp(t *testing.T) {
 	}
 }
 
+func TestParseSGRMouseEventDetectsOptionModifier(t *testing.T) {
+	ev, err := parseSGRMouseEvent("<8;12;5", 'M')
+	if err != nil {
+		t.Fatalf("parseSGRMouseEvent() returned error: %v", err)
+	}
+	mouse, ok := ev.(mouseEvent)
+	if !ok {
+		t.Fatalf("expected mouseEvent, got %#v", ev)
+	}
+	if !mouse.optionModified() || mouse.baseButton() != 0 {
+		t.Fatalf("unexpected option-click event: %#v", mouse)
+	}
+}
+
 func TestHandleMouseScrollsPager(t *testing.T) {
 	p := &pager{
 		topLine: 10,
@@ -699,6 +713,24 @@ func TestSelectionBoundsNormalizesReverseDrag(t *testing.T) {
 	}
 	if end != (selectionPoint{line: 1, col: 4}) {
 		t.Fatalf("end = %#v", end)
+	}
+}
+
+func TestOptionMouseSelectionEnablesQuotedCopy(t *testing.T) {
+	p := &pager{plainLines: []string{"alpha"}}
+
+	p.handleSelectionMouse(mouseEvent{button: 8, row: 1, col: 1, pressed: true})
+
+	if !p.selection.quoted {
+		t.Fatal("Option-click did not enable quoted selection")
+	}
+}
+
+func TestQuoteMarkdownPrefixesEveryLine(t *testing.T) {
+	got := string(quoteMarkdown([]byte("alpha\n\nbeta\n")))
+	want := "> alpha\n> \n> beta\n> "
+	if got != want {
+		t.Fatalf("quoteMarkdown() = %q, want %q", got, want)
 	}
 }
 

@@ -149,6 +149,7 @@ type selectionState struct {
 	selecting bool
 	dragged   bool
 	flash     bool
+	quoted    bool
 	anchor    selectionCell
 	current   selectionCell
 }
@@ -173,6 +174,10 @@ func (e mouseEvent) isWheel() bool {
 
 func (e mouseEvent) baseButton() int {
 	return e.button & 3
+}
+
+func (e mouseEvent) optionModified() bool {
+	return e.button&8 != 0
 }
 
 func (e mouseEvent) verticalWheelDirection() (int, bool) {
@@ -397,6 +402,7 @@ func (p *pager) handleSelectionMouse(ev mouseEvent) {
 		if !p.selection.selecting || !ok {
 			return
 		}
+		p.selection.quoted = p.selection.quoted || ev.optionModified()
 		if cell != p.selection.current {
 			p.selection.dragged = true
 		}
@@ -416,6 +422,7 @@ func (p *pager) handleSelectionMouse(ev mouseEvent) {
 		p.selection = selectionState{
 			active:    true,
 			selecting: true,
+			quoted:    ev.optionModified(),
 			anchor:    cell,
 			current:   cell,
 		}
@@ -428,6 +435,7 @@ func (p *pager) handleSelectionMouse(ev mouseEvent) {
 	if cell != p.selection.current {
 		p.selection.dragged = true
 	}
+	p.selection.quoted = p.selection.quoted || ev.optionModified()
 	p.selection.current = cell
 	_ = p.finishSelectionCopy()
 }
@@ -444,12 +452,25 @@ func (p *pager) finishSelectionCopy() error {
 		p.selection.active = false
 		return nil
 	}
+	if p.selection.quoted {
+		text = quoteMarkdown(text)
+	}
 	if err := p.copyToClipboard(text); err != nil {
 		p.setNotice(err.Error(), true)
 		return err
 	}
 	p.clearNotice()
 	return p.flashSelection()
+}
+
+func quoteMarkdown(text []byte) []byte {
+	if len(text) == 0 {
+		return nil
+	}
+	quoted := make([]byte, 0, len(text)+2)
+	quoted = append(quoted, '>', ' ')
+	quoted = append(quoted, bytes.ReplaceAll(text, []byte("\n"), []byte("\n> "))...)
+	return quoted
 }
 
 func (p *pager) flashSelection() error {
