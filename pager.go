@@ -72,6 +72,7 @@ type pager struct {
 	changeFlash      map[int][]matchRange
 	changeFlashUntil time.Time
 	helpActive       bool
+	flow             bool
 }
 
 type tintTheme struct {
@@ -378,7 +379,7 @@ func (p *pager) handleMouse(ev mouseEvent) {
 }
 
 func (p *pager) codeBlockButton(row, col int) (renderCodeBlock, bool) {
-	if col != 1 || row < 1 || row > p.viewHeight() {
+	if col != p.contentLeft() || row < 1 || row > p.viewHeight() {
 		return renderCodeBlock{}, false
 	}
 	line := p.topLine + row - 1
@@ -482,7 +483,7 @@ func (p *pager) mouseSelectionCell(row, col int) (selectionCell, bool) {
 		return selectionCell{}, false
 	}
 	width := utf8.RuneCountInString(p.plainLines[line])
-	col = clamp(col, 1, width+1)
+	col = clamp(col-p.contentLeft()+1, 1, width+1)
 	return selectionCell{line: line, col: col}, true
 }
 
@@ -714,7 +715,7 @@ func (p *pager) handleKey(ev keyEvent) bool {
 		p.scrollBy(max(1, p.viewHeight()/2))
 	case ev.ch == 'u':
 		p.scrollBy(-max(1, p.viewHeight()/2))
-	case ev.ch == ' ' || ev.ch == 'f' || ev.ch == 22 || ev.kind == keyPageDown:
+	case ev.ch == ' ' || ev.ch == 22 || ev.kind == keyPageDown:
 		p.scrollBy(p.viewHeight())
 	case ev.ch == 'b' || (ev.alt && unicode.ToLower(ev.ch) == 'v') || ev.kind == keyPageUp:
 		p.scrollBy(-p.viewHeight())
@@ -734,6 +735,11 @@ func (p *pager) handleKey(ev keyEvent) bool {
 		p.searchPrev()
 	case ev.ch == 'r' || ev.ch == 12:
 		_ = p.reload(false)
+	case ev.ch == 'f':
+		p.flow = !p.flow
+		if err := p.rebuild(); err != nil {
+			p.setNotice(err.Error(), true)
+		}
 	case ev.ch == 'q' || ev.ch == 3:
 		return true
 	}
@@ -957,10 +963,21 @@ func (p *pager) rebuild() error {
 }
 
 func (p *pager) renderWidth() int {
+	width := p.width
 	if p.cfg.Width > 0 {
-		return p.cfg.Width
+		width = p.cfg.Width
 	}
-	return p.width
+	if p.flow && p.width > 100 && width > 100 {
+		return 100
+	}
+	return width
+}
+
+func (p *pager) contentLeft() int {
+	if !p.flow || p.width <= 100 {
+		return 1
+	}
+	return max(1, (p.width-p.renderWidth())/2+1)
 }
 
 func (p *pager) draw() error {
@@ -970,12 +987,14 @@ func (p *pager) draw() error {
 
 	var out strings.Builder
 	viewHeight := p.viewHeight()
+	contentLeft := p.contentLeft()
 
 	for row := 0; row < viewHeight; row++ {
 		out.WriteString(cursorTo(row+1, 1))
 		out.WriteString("\033[2K")
 		lineIdx := p.topLine + row
 		if lineIdx < len(p.lines) {
+			out.WriteString(cursorTo(row+1, contentLeft))
 			out.WriteString(p.renderLine(lineIdx))
 		}
 	}
@@ -1047,7 +1066,7 @@ func pagerHelpLines() []string {
 		"g / Home / Alt-< first; G / End / Alt-> last",
 		"",
 		Bold + "Document" + Reset,
-		"Ctrl-R                     open outline",
+		"f flow mode; Ctrl-R open outline",
 		"r / Ctrl-L reload; ? help",
 		"/                          search; n / N next / previous",
 		"q / Ctrl-C                 quit",
@@ -1325,6 +1344,9 @@ func (p *pager) statusBarLeft() string {
 func (p *pager) statusBarLeftParts() (string, []string) {
 	section := p.statusSectionPath()
 	var extras []string
+	if p.flow {
+		extras = append(extras, "flow")
+	}
 	if p.searchQuery != "" {
 		if len(p.searchMatches) == 0 {
 			extras = append(extras, fmt.Sprintf("/%s 0", p.searchQuery))

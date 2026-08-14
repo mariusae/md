@@ -109,6 +109,36 @@ func TestQuestionMarkTogglesHelpScreen(t *testing.T) {
 	}
 }
 
+func TestFlowModeCapsAndCentersWideContent(t *testing.T) {
+	p := &pager{width: 140, height: 24}
+
+	p.handleKey(keyEvent{kind: keyRune, ch: 'f'})
+
+	if !p.flow {
+		t.Fatal("f did not enable flow mode")
+	}
+	if got := p.renderWidth(); got != 100 {
+		t.Fatalf("renderWidth() = %d, want 100", got)
+	}
+	if got := p.contentLeft(); got != 21 {
+		t.Fatalf("contentLeft() = %d, want 21", got)
+	}
+	if !strings.Contains(p.statusBarLeft(), "flow") {
+		t.Fatalf("status bar does not show flow mode: %q", p.statusBarLeft())
+	}
+}
+
+func TestFlowModeDoesNotNarrowSmallScreens(t *testing.T) {
+	p := &pager{width: 80, flow: true}
+
+	if got := p.renderWidth(); got != 80 {
+		t.Fatalf("renderWidth() = %d, want 80", got)
+	}
+	if got := p.contentLeft(); got != 1 {
+		t.Fatalf("contentLeft() = %d, want 1", got)
+	}
+}
+
 func TestHelpFitsStandardTerminalHeight(t *testing.T) {
 	if got := len(pagerHelpLines()); got > 24 {
 		t.Fatalf("help has %d rows; want at most 24", got)
