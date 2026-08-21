@@ -133,6 +133,41 @@ func TestFencedCodeBlockPlacesPagerCopyIconOnFirstLine(t *testing.T) {
 	}
 }
 
+func TestMermaidFencedCodeBlockRendersDiagram(t *testing.T) {
+	out := renderOpts("```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n", 80, false)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "Start") || !strings.Contains(plain, "End") {
+		t.Fatalf("mermaid node labels missing: %q", plain)
+	}
+	if !strings.Contains(plain, "▼") {
+		t.Fatalf("mermaid arrowhead missing: %q", plain)
+	}
+	if strings.Contains(plain, "graph TD") {
+		t.Fatalf("mermaid source rendered instead of diagram: %q", plain)
+	}
+}
+
+func TestMermaidFenceLanguageIsCaseInsensitive(t *testing.T) {
+	out := renderOpts("```Mermaid\ngraph LR\n  A --> B\n```\n", 80, false)
+	if !strings.Contains(stripANSI(out), "─") {
+		t.Fatalf("Mermaid fence was not rendered: %q", out)
+	}
+}
+
+func TestMermaidFencedCodeBlockKeepsCopyPayload(t *testing.T) {
+	source := []byte("```mermaid\ngraph TD\n  A --> B\n```\n")
+	result, err := RenderDocument(source, 80, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.codeBlocks) != 1 {
+		t.Fatalf("codeBlocks = %#v", result.codeBlocks)
+	}
+	if got := string(result.codeBlocks[0].text); got != "graph TD\n  A --> B\n" {
+		t.Fatalf("copy payload = %q", got)
+	}
+}
+
 func TestFencedCodeBlockPagerLineAccountsForFrontMatter(t *testing.T) {
 	result, err := RenderDocument([]byte("---\ntitle: Example\n---\n```\nfoo\n```\n"), 80, false)
 	if err != nil {

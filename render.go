@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/mariusae/md/internal/grokmermaid"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
@@ -827,13 +828,73 @@ func (r *AnsiRenderer) renderFencedCodeBlock(w util.BufWriter, source []byte, no
 	if entering {
 		r.recordCodeBlock(source, node)
 		r.pushSourceSpan(blockSourceSpan(source, node))
-		r.renderCodeLines(w, source, node)
+		fenced := node.(*ast.FencedCodeBlock)
+		if strings.EqualFold(strings.TrimSpace(string(fenced.Language(source))), "mermaid") {
+			if err := r.renderMermaidBlock(w, codeBlockText(source, node)); err != nil {
+				return ast.WalkStop, err
+			}
+		} else {
+			r.renderCodeLines(w, source, node)
+		}
 		r.popSourceSpan()
 		r.writeNewline(w)
 		r.col = 0
 		return ast.WalkSkipChildren, nil
 	}
 	return ast.WalkContinue, nil
+}
+
+func (r *AnsiRenderer) renderMermaidBlock(w util.BufWriter, source []byte) error {
+	maxWidth := 0
+	if r.width > 4 {
+		maxWidth = r.width - 4
+	}
+	art, err := grokmermaid.Render(string(source), maxWidth)
+	if err != nil {
+		return fmt.Errorf("rendering mermaid diagram: %w", err)
+	}
+	if art == nil {
+		return nil
+	}
+
+	for _, line := range art.Lines {
+		if r.renderStyle.CodeBlockBG != "" {
+			r.pushStyle(style{background: r.renderStyle.CodeBlockBG}, w)
+		}
+		r.writeString(w, "    ")
+		r.col = 4
+		for _, span := range line.Spans {
+			spanStyle := mermaidSpanStyle(span)
+			r.pushStyle(spanStyle, w)
+			r.writeString(w, span.Text)
+			r.col += terminalWidth(span.Text)
+			r.popStyle(w)
+		}
+		if r.renderStyle.CodeBlockBG != "" {
+			if padding := r.width - r.col; padding > 0 {
+				r.writeString(w, strings.Repeat(" ", padding))
+			}
+			r.popStyle(w)
+		}
+		r.writeNewline(w)
+	}
+	return nil
+}
+
+func mermaidSpanStyle(span grokmermaid.Span) style {
+	result := style{italic: span.Italic}
+	switch span.Class {
+	case grokmermaid.ClassBorder:
+		result.color = Dim
+	case grokmermaid.ClassEdge:
+		result.color = FgBlue
+	case grokmermaid.ClassEdgeLabel:
+		result.color = FgBlue
+		result.italic = true
+	case grokmermaid.ClassTitle:
+		result.bold = true
+	}
+	return result
 }
 
 func (r *AnsiRenderer) renderCodeLines(w util.BufWriter, source []byte, node ast.Node) {
@@ -871,16 +932,21 @@ func splitLineEnding(line []byte) (content, ending []byte) {
 }
 
 func (r *AnsiRenderer) recordCodeBlock(source []byte, node ast.Node) {
+	text := codeBlockText(source, node)
+	r.codeBlocks = append(r.codeBlocks, renderCodeBlock{
+		line: r.line,
+		text: text,
+	})
+}
+
+func codeBlockText(source []byte, node ast.Node) []byte {
 	var text []byte
 	lines := node.Lines()
 	for i := 0; i < lines.Len(); i++ {
 		line := lines.At(i)
 		text = append(text, line.Value(source)...)
 	}
-	r.codeBlocks = append(r.codeBlocks, renderCodeBlock{
-		line: r.line,
-		text: text,
-	})
+	return text
 }
 
 func (r *AnsiRenderer) renderBlockquote(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {

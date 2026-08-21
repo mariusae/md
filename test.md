@@ -269,6 +269,63 @@ tell application "Foo"
 end tell
 ```
 
+### Mermaid Diagrams
+
+Flowchart:
+
+```mermaid
+flowchart TD
+    Request[Request received] --> Validate{Valid?}
+    Validate -->|yes| Process[Process request]
+    Validate -->|no| Reject[Return error]
+    Process --> Done[Complete]
+```
+
+Sequence diagram:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant M as md
+    participant R as Renderer
+    U->>M: Open document
+    M->>R: Render Mermaid source
+    R-->>M: Unicode diagram
+    M-->>U: Display result
+```
+
+State diagram:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Loading : open
+    Loading --> Ready : success
+    Loading --> Error : failure
+    Error --> Loading : retry
+    Ready --> [*]
+```
+
+Class diagram:
+
+```mermaid
+classDiagram
+    class Document {
+        +String path
+        +render()
+    }
+    Document <|-- MarkdownDocument
+    MarkdownDocument --> Diagram
+```
+
+Entity relationship diagram:
+
+```mermaid
+erDiagram
+    DOCUMENT ||--o{ CODE_BLOCK : contains
+    CODE_BLOCK ||--o| DIAGRAM : renders
+```
+
 ## Span Elements
 
 ### Links
