@@ -35,7 +35,7 @@ type renderCodeBlock struct {
 	text []byte
 }
 
-const fileLinkIcon = " ↗"
+const fileLinkIcon = "↗"
 
 type sourceSpan struct {
 	start int

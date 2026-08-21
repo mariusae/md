@@ -708,7 +708,7 @@ func TestFileLinkAtFindsRenderedFileLink(t *testing.T) {
 	if _, ok := p.fileLinkAt(1, 7); ok {
 		t.Fatal("fileLinkAt() matched text outside the link")
 	}
-	iconCol := terminalWidth("before main ") + 1
+	iconCol := terminalWidth("before main") + 1
 	if got, ok := p.fileLinkAt(1, iconCol); !ok || got != "src/main.go:42" {
 		t.Fatalf("fileLinkAt(icon) = %q, %v", got, ok)
 	}
@@ -718,7 +718,7 @@ func TestFileLinkAtFindsIconWrappedOntoNextLine(t *testing.T) {
 	p := &pager{
 		height: 8,
 		lines: []string{
-			OSC8Start("src/main.go") + "source ",
+			OSC8Start("src/main.go") + "source",
 			strings.TrimSpace(fileLinkIcon) + OSC8End,
 		},
 	}
