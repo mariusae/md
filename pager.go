@@ -9,9 +9,11 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -69,6 +71,7 @@ type pager struct {
 	theme            tintTheme
 	outline          outlineState
 	selection        selectionState
+	pressedFileLink  string
 	changeFlash      map[int][]matchRange
 	changeFlashUntil time.Time
 	helpActive       bool
@@ -199,6 +202,14 @@ func (e mouseEvent) noButtonsDown() bool {
 }
 
 var timeNow = time.Now
+
+var openFileInBackground = func(target string) error {
+	cmd := exec.Command("ion", "-B", target)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
+}
 
 func RunPager(cfg PagerConfig) error {
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
@@ -370,6 +381,7 @@ func (p *pager) handleMouse(ev mouseEvent) {
 
 	if ev.pressed && ev.baseButton() == 0 {
 		if block, ok := p.codeBlockButton(ev.row, ev.col); ok {
+			p.pressedFileLink = ""
 			p.selection = selectionState{}
 			if err := p.copyToClipboard(block.text); err != nil {
 				p.setNotice(err.Error(), true)
@@ -378,9 +390,88 @@ func (p *pager) handleMouse(ev mouseEvent) {
 			}
 			return
 		}
+		p.pressedFileLink, _ = p.fileLinkAt(ev.row, ev.col)
+	}
+
+	if !ev.pressed && !ev.isMotion() && ev.baseButton() == 0 {
+		pressed := p.pressedFileLink
+		p.pressedFileLink = ""
+		if target, ok := p.fileLinkAt(ev.row, ev.col); ok && target == pressed && !p.selection.dragged {
+			p.selection = selectionState{}
+			if err := openFileInBackground(target); err != nil {
+				p.setNotice(fmt.Sprintf("opening %s: %v", target, err), true)
+			} else {
+				p.setNotice("Opened "+target, false)
+			}
+			return
+		}
 	}
 
 	p.handleSelectionMouse(ev)
+}
+
+func (p *pager) fileLinkAt(row, col int) (string, bool) {
+	if row < 1 || row > p.viewHeight() {
+		return "", false
+	}
+	line := p.topLine + row - 1
+	if line < 0 || line >= len(p.lines) {
+		return "", false
+	}
+	cell := col - p.contentLeft()
+	if cell < 0 {
+		return "", false
+	}
+
+	target, ok := osc8LinkAtCell(p.lines[line], cell)
+	if !ok || !isFileLink(target) {
+		return "", false
+	}
+	return target, true
+}
+
+func osc8LinkAtCell(line string, cell int) (string, bool) {
+	visible := 0
+	currentLink := ""
+	for i := 0; i < len(line); {
+		if line[i] == 0x1b {
+			seq, _, next := consumeEscapeSequence(line, i)
+			if seq == "" || next <= i {
+				break
+			}
+			if strings.HasPrefix(seq, "\033]8;;") {
+				currentLink = strings.TrimSuffix(strings.TrimPrefix(seq, "\033]8;;"), "\033\\")
+			}
+			i = next
+			continue
+		}
+
+		r, size := utf8.DecodeRuneInString(line[i:])
+		width := terminalRuneWidth(r)
+		if currentLink != "" && cell >= visible && cell < visible+width {
+			return currentLink, true
+		}
+		visible += width
+		i += size
+	}
+	return "", false
+}
+
+func isFileLink(target string) bool {
+	if target == "" || strings.HasPrefix(target, "#") || strings.HasPrefix(target, "//") {
+		return false
+	}
+	colon := strings.IndexByte(target, ':')
+	if colon < 0 {
+		return true
+	}
+	if colon == 1 && ((target[0] >= 'a' && target[0] <= 'z') || (target[0] >= 'A' && target[0] <= 'Z')) {
+		return true
+	}
+	if _, err := strconv.Atoi(target[colon+1:]); err == nil {
+		return true
+	}
+	return strings.ContainsAny(target[:colon], "/\\")
 }
 
 func (p *pager) codeBlockButton(row, col int) (renderCodeBlock, bool) {

@@ -694,6 +694,67 @@ func TestHandleMouseCopiesCodeBlockWithOSC52(t *testing.T) {
 	}
 }
 
+func TestFileLinkAtFindsRenderedFileLink(t *testing.T) {
+	p := &pager{
+		height: 8,
+		lines: []string{
+			"before " + OSC8Start("src/main.go:42") + "main" + OSC8End + " after",
+		},
+	}
+
+	if got, ok := p.fileLinkAt(1, 9); !ok || got != "src/main.go:42" {
+		t.Fatalf("fileLinkAt() = %q, %v", got, ok)
+	}
+	if _, ok := p.fileLinkAt(1, 7); ok {
+		t.Fatal("fileLinkAt() matched text outside the link")
+	}
+}
+
+func TestFileLinkClickOpensWithIonInBackground(t *testing.T) {
+	original := openFileInBackground
+	defer func() { openFileInBackground = original }()
+	var opened string
+	openFileInBackground = func(target string) error {
+		opened = target
+		return nil
+	}
+
+	p := &pager{
+		height: 8,
+		lines:  []string{OSC8Start("README.md:12") + "README" + OSC8End},
+	}
+	p.handleMouse(mouseEvent{button: 0, row: 1, col: 2, pressed: true})
+	p.handleMouse(mouseEvent{button: 0, row: 1, col: 5, pressed: false})
+
+	if opened != "README.md:12" {
+		t.Fatalf("opened %q, want README.md:12", opened)
+	}
+	if p.notice != "Opened README.md:12" || p.noticeIsError {
+		t.Fatalf("notice = %q, error = %v", p.notice, p.noticeIsError)
+	}
+}
+
+func TestHTTPLinkClickDoesNotOpenIon(t *testing.T) {
+	original := openFileInBackground
+	defer func() { openFileInBackground = original }()
+	called := false
+	openFileInBackground = func(string) error {
+		called = true
+		return nil
+	}
+
+	p := &pager{
+		height: 8,
+		lines:  []string{OSC8Start("https://example.com") + "example" + OSC8End},
+	}
+	p.handleMouse(mouseEvent{button: 0, row: 1, col: 2, pressed: true})
+	p.handleMouse(mouseEvent{button: 0, row: 1, col: 2, pressed: false})
+
+	if called {
+		t.Fatal("HTTP link unexpectedly opened with ion")
+	}
+}
+
 func TestSelectionBoundsNormalizesReverseDrag(t *testing.T) {
 	p := &pager{
 		plainLines: []string{"alpha", "beta"},
