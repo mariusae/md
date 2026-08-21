@@ -802,6 +802,13 @@ func (r *AnsiRenderer) renderHeading(w util.BufWriter, source []byte, node ast.N
 
 func (r *AnsiRenderer) renderParagraph(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if !entering {
+		if node.Parent() != nil && node.Parent().Kind() == ast.KindListItem {
+			if node.NextSibling() != nil {
+				r.writeNewline(w)
+				r.writeNewline(w)
+			}
+			return ast.WalkContinue, nil
+		}
 		r.writeNewline(w)
 		if r.blockquoteDepth > 0 && node.NextSibling() != nil {
 			r.writeIndent(w)
@@ -817,7 +824,9 @@ func (r *AnsiRenderer) renderCodeBlock(w util.BufWriter, source []byte, node ast
 		r.pushSourceSpan(blockSourceSpan(source, node))
 		r.renderCodeLines(w, source, node)
 		r.popSourceSpan()
-		r.writeNewline(w)
+		if node.Parent() == nil || node.Parent().Kind() != ast.KindListItem {
+			r.writeNewline(w)
+		}
 		r.col = 0
 		return ast.WalkSkipChildren, nil
 	}
@@ -837,7 +846,9 @@ func (r *AnsiRenderer) renderFencedCodeBlock(w util.BufWriter, source []byte, no
 			r.renderCodeLines(w, source, node)
 		}
 		r.popSourceSpan()
-		r.writeNewline(w)
+		if node.Parent() == nil || node.Parent().Kind() != ast.KindListItem {
+			r.writeNewline(w)
+		}
 		r.col = 0
 		return ast.WalkSkipChildren, nil
 	}

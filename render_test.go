@@ -201,6 +201,17 @@ func TestOrderedList(t *testing.T) {
 	}
 }
 
+func TestLooseOrderedListKeepsSimpleItemsCompact(t *testing.T) {
+	md := "1. one\n2. two\n3. three:\n\n   ```text\n   code\n   ```\n\n4. four\n"
+	plain := stripANSI(render(md))
+	if !strings.Contains(plain, "  1. one\n  2. two\n  3. three:") {
+		t.Fatalf("simple loose-list items have extra spacing: %q", plain)
+	}
+	if !strings.Contains(plain, "    code\n\n  4. four") {
+		t.Fatalf("nested code block spacing is incorrect: %q", plain)
+	}
+}
+
 func TestTable(t *testing.T) {
 	md := `| Name | Age |
 | ---- | --- |
