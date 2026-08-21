@@ -620,10 +620,10 @@ func TestRenderLineAddsCopyIconToCodeBlockLeftGutter(t *testing.T) {
 	}
 
 	got := p.renderLine(0)
-	if stripANSI(got) != "⎘   foo" {
+	if stripANSI(got) != codeBlockCopyIcon+"   foo" {
 		t.Fatalf("stripANSI(renderLine(0)) = %q", stripANSI(got))
 	}
-	if !strings.Contains(got, bg+Dim+"⎘"+Reset+bg+"   foo") {
+	if !strings.Contains(got, bg+Dim+codeBlockCopyIcon+Reset+bg+"   foo") {
 		t.Fatalf("copy icon or tinted background is misplaced: %q", got)
 	}
 }
@@ -770,6 +770,33 @@ func TestHTTPLinkClickDoesNotOpenIon(t *testing.T) {
 
 	if called {
 		t.Fatal("HTTP link unexpectedly opened with ion")
+	}
+}
+
+func TestInformationalNoticeExpires(t *testing.T) {
+	original := timeNow
+	defer func() { timeNow = original }()
+	now := time.Date(2026, time.August, 21, 12, 0, 0, 0, time.UTC)
+	timeNow = func() time.Time { return now }
+
+	p := &pager{}
+	p.setNotice("Opened README.md", false)
+	p.clearExpiredNotice(now.Add(transientNoticeDuration - time.Millisecond))
+	if p.notice == "" {
+		t.Fatal("informational notice expired too early")
+	}
+	p.clearExpiredNotice(now.Add(transientNoticeDuration))
+	if p.notice != "" || p.noticeIsError || !p.noticeUntil.IsZero() {
+		t.Fatalf("expired notice was not cleared: %#v", p)
+	}
+}
+
+func TestErrorNoticeDoesNotExpire(t *testing.T) {
+	p := &pager{}
+	p.setNotice("failed", true)
+	p.clearExpiredNotice(timeNow().Add(time.Hour))
+	if p.notice != "failed" || !p.noticeIsError {
+		t.Fatalf("error notice was cleared: %#v", p)
 	}
 }
 

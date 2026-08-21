@@ -26,18 +26,20 @@ import (
 )
 
 const (
-	enterAltScreen        = "\033[?1049h"
-	exitAltScreen         = "\033[?1049l"
-	hideCursor            = "\033[?25l"
-	showCursor            = "\033[?25h"
-	clearScreen           = "\033[2J"
-	cursorHome            = "\033[H"
-	enableFocusReporting  = "\033[?1004h"
-	disableFocusReporting = "\033[?1004l"
-	enableMouseReporting  = "\033[?1000h\033[?1002h\033[?1006h"
-	disableMouseReporting = "\033[?1006l\033[?1002l\033[?1000l"
-	queryBackgroundColor  = "\033]11;?\033\\"
-	changeFlashDuration   = 2 * time.Second
+	enterAltScreen          = "\033[?1049h"
+	exitAltScreen           = "\033[?1049l"
+	hideCursor              = "\033[?25l"
+	showCursor              = "\033[?25h"
+	clearScreen             = "\033[2J"
+	cursorHome              = "\033[H"
+	enableFocusReporting    = "\033[?1004h"
+	disableFocusReporting   = "\033[?1004l"
+	enableMouseReporting    = "\033[?1000h\033[?1002h\033[?1006h"
+	disableMouseReporting   = "\033[?1006l\033[?1002l\033[?1000l"
+	queryBackgroundColor    = "\033]11;?\033\\"
+	changeFlashDuration     = 2 * time.Second
+	transientNoticeDuration = 2 * time.Second
+	codeBlockCopyIcon       = "⧉"
 )
 
 type PagerConfig struct {
@@ -68,6 +70,7 @@ type pager struct {
 	promptCursor     int
 	notice           string
 	noticeIsError    bool
+	noticeUntil      time.Time
 	theme            tintTheme
 	outline          outlineState
 	selection        selectionState
@@ -267,9 +270,14 @@ func RunPager(cfg PagerConfig) error {
 	defer timeTicker.Stop()
 	var flashTimer *time.Timer
 	var flashTimerCh <-chan time.Time
+	var noticeTimer *time.Timer
+	var noticeTimerCh <-chan time.Time
 	defer func() {
 		if flashTimer != nil {
 			flashTimer.Stop()
+		}
+		if noticeTimer != nil {
+			noticeTimer.Stop()
 		}
 	}()
 
@@ -309,9 +317,14 @@ func RunPager(cfg PagerConfig) error {
 		case <-flashTimerCh:
 			p.clearChangeFlash()
 			flashTimerCh = nil
+		case <-noticeTimerCh:
+			p.clearExpiredNotice(timeNow())
+			noticeTimerCh = nil
 		}
 
-		p.clearExpiredChangeFlash(timeNow())
+		now := timeNow()
+		p.clearExpiredChangeFlash(now)
+		p.clearExpiredNotice(now)
 		if err := p.draw(); err != nil {
 			return err
 		}
@@ -332,6 +345,24 @@ func RunPager(cfg PagerConfig) error {
 				flashTimer.Reset(delay)
 			}
 			flashTimerCh = flashTimer.C
+		}
+		if !p.noticeUntil.IsZero() {
+			delay := time.Until(p.noticeUntil)
+			if delay < time.Millisecond {
+				delay = time.Millisecond
+			}
+			if noticeTimer == nil {
+				noticeTimer = time.NewTimer(delay)
+			} else {
+				if !noticeTimer.Stop() {
+					select {
+					case <-noticeTimer.C:
+					default:
+					}
+				}
+				noticeTimer.Reset(delay)
+			}
+			noticeTimerCh = noticeTimer.C
 		}
 	}
 }
@@ -1406,7 +1437,7 @@ func (p *pager) renderLine(lineIdx int) string {
 	line := p.lines[lineIdx]
 	for _, block := range p.codeBlocks {
 		if block.line == lineIdx {
-			line = replaceVisibleRune(line, 0, Dim+"⎘"+Reset+p.theme.codeBlockBG)
+			line = replaceVisibleRune(line, 0, Dim+codeBlockCopyIcon+Reset+p.theme.codeBlockBG)
 			break
 		}
 	}
@@ -1605,11 +1636,22 @@ func (p *pager) closeOutline() {
 func (p *pager) setNotice(msg string, isError bool) {
 	p.notice = msg
 	p.noticeIsError = isError
+	p.noticeUntil = time.Time{}
+	if msg != "" && !isError {
+		p.noticeUntil = timeNow().Add(transientNoticeDuration)
+	}
 }
 
 func (p *pager) clearNotice() {
 	p.notice = ""
 	p.noticeIsError = false
+	p.noticeUntil = time.Time{}
+}
+
+func (p *pager) clearExpiredNotice(now time.Time) {
+	if !p.noticeUntil.IsZero() && !now.Before(p.noticeUntil) {
+		p.clearNotice()
+	}
 }
 
 func (p *pager) refreshSearchState() {

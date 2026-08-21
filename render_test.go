@@ -80,7 +80,7 @@ func TestInlineCode(t *testing.T) {
 
 func TestFencedCodeBlock(t *testing.T) {
 	out := render("```\nfoo\nbar\n```\n")
-	if strings.Contains(out, "⎘") {
+	if strings.Contains(out, codeBlockCopyIcon) {
 		t.Error("one-shot rendering should not contain the pager copy icon")
 	}
 	if !strings.Contains(out, "    foo") {
