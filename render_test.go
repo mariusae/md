@@ -293,7 +293,7 @@ func TestFileLinkOSC8IncludesClickableFileIcon(t *testing.T) {
 	if !strings.Contains(stripANSI(out), "source"+fileLinkIcon) {
 		t.Fatalf("file link icon missing: %q", out)
 	}
-	icon := strings.Index(out, "📄")
+	icon := strings.Index(out, strings.TrimSpace(fileLinkIcon))
 	end := strings.Index(out, OSC8End)
 	if icon < 0 || end < 0 || icon > end {
 		t.Fatalf("file icon is not inside the OSC-8 link: %q", out)
@@ -302,7 +302,7 @@ func TestFileLinkOSC8IncludesClickableFileIcon(t *testing.T) {
 
 func TestWebLinkOSC8DoesNotIncludeFileIcon(t *testing.T) {
 	out := renderOpts("[website](https://example.com)\n", 80, true)
-	if strings.Contains(out, "📄") {
+	if strings.Contains(out, strings.TrimSpace(fileLinkIcon)) {
 		t.Fatalf("web link unexpectedly includes file icon: %q", out)
 	}
 }
