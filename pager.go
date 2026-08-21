@@ -423,36 +423,39 @@ func (p *pager) fileLinkAt(row, col int) (string, bool) {
 		return "", false
 	}
 
-	target, ok := osc8LinkAtCell(p.lines[line], cell)
+	target, ok := osc8LinkAtCell(p.lines, line, cell)
 	if !ok || !isFileLink(target) {
 		return "", false
 	}
 	return target, true
 }
 
-func osc8LinkAtCell(line string, cell int) (string, bool) {
-	visible := 0
+func osc8LinkAtCell(lines []string, lineIndex, cell int) (string, bool) {
 	currentLink := ""
-	for i := 0; i < len(line); {
-		if line[i] == 0x1b {
-			seq, _, next := consumeEscapeSequence(line, i)
-			if seq == "" || next <= i {
-				break
+	for currentLine := 0; currentLine <= lineIndex; currentLine++ {
+		line := lines[currentLine]
+		visible := 0
+		for i := 0; i < len(line); {
+			if line[i] == 0x1b {
+				seq, _, next := consumeEscapeSequence(line, i)
+				if seq == "" || next <= i {
+					break
+				}
+				if strings.HasPrefix(seq, "\033]8;;") {
+					currentLink = strings.TrimSuffix(strings.TrimPrefix(seq, "\033]8;;"), "\033\\")
+				}
+				i = next
+				continue
 			}
-			if strings.HasPrefix(seq, "\033]8;;") {
-				currentLink = strings.TrimSuffix(strings.TrimPrefix(seq, "\033]8;;"), "\033\\")
-			}
-			i = next
-			continue
-		}
 
-		r, size := utf8.DecodeRuneInString(line[i:])
-		width := terminalRuneWidth(r)
-		if currentLink != "" && cell >= visible && cell < visible+width {
-			return currentLink, true
+			r, size := utf8.DecodeRuneInString(line[i:])
+			width := terminalRuneWidth(r)
+			if currentLine == lineIndex && currentLink != "" && cell >= visible && cell < visible+width {
+				return currentLink, true
+			}
+			visible += width
+			i += size
 		}
-		visible += width
-		i += size
 	}
 	return "", false
 }

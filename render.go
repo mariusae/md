@@ -35,6 +35,8 @@ type renderCodeBlock struct {
 	text []byte
 }
 
+const fileLinkIcon = " 📄"
+
 type sourceSpan struct {
 	start int
 	end   int
@@ -1097,6 +1099,11 @@ func (r *AnsiRenderer) renderLink(w util.BufWriter, source []byte, node ast.Node
 	} else {
 		if r.osc8 {
 			r.popStyle(w)
+			if isFileLink(string(n.Destination)) {
+				r.pushStyle(style{color: FgBlue}, w)
+				r.writeWrapped(w, fileLinkIcon)
+				r.popStyle(w)
+			}
 			r.writeString(w, OSC8End)
 		} else {
 			r.writeWrapped(w, " (")
