@@ -123,6 +123,9 @@ func TestFlowModeCapsAndCentersWideContent(t *testing.T) {
 	if got := p.contentLeft(); got != 21 {
 		t.Fatalf("contentLeft() = %d, want 21", got)
 	}
+	if got := p.contentWidth(); got != 100 {
+		t.Fatalf("contentWidth() = %d, want 100", got)
+	}
 	if !strings.Contains(p.statusBarLeft(), "flow") {
 		t.Fatalf("status bar does not show flow mode: %q", p.statusBarLeft())
 	}
@@ -136,6 +139,57 @@ func TestFlowModeDoesNotNarrowSmallScreens(t *testing.T) {
 	}
 	if got := p.contentLeft(); got != 1 {
 		t.Fatalf("contentLeft() = %d, want 1", got)
+	}
+}
+
+func TestHorizontalScrollingKeysAndStatus(t *testing.T) {
+	p := &pager{
+		width:      10,
+		plainLines: []string{"abcdefghijklmnopqrstuvwxyz"},
+	}
+
+	p.handleKey(keyEvent{kind: keyRight})
+	if p.leftCol != 4 {
+		t.Fatalf("right arrow leftCol = %d, want 4", p.leftCol)
+	}
+	if !strings.Contains(p.statusBarLeft(), "col 5") {
+		t.Fatalf("status does not show horizontal offset: %q", p.statusBarLeft())
+	}
+	p.handleKey(keyEvent{kind: keyRune, ch: '$'})
+	if p.leftCol != 16 {
+		t.Fatalf("$ leftCol = %d, want 16", p.leftCol)
+	}
+	p.handleKey(keyEvent{kind: keyRune, ch: '0'})
+	if p.leftCol != 0 {
+		t.Fatalf("0 leftCol = %d, want 0", p.leftCol)
+	}
+}
+
+func TestSliceVisiblePreservesStylesAndHyperlinks(t *testing.T) {
+	rendered := OSC8Start("README.md") + Bold + "abcdef" + Reset + OSC8End
+	got := sliceVisible(rendered, 2, 3)
+	if stripANSI(got) != "cde" {
+		t.Fatalf("stripANSI(sliceVisible()) = %q, want cde", stripANSI(got))
+	}
+	if !strings.Contains(got, OSC8Start("README.md")) || !strings.Contains(got, OSC8End) {
+		t.Fatalf("sliced hyperlink was not preserved: %q", got)
+	}
+	if !strings.Contains(got, Bold) || !strings.Contains(got, Reset) {
+		t.Fatalf("sliced style was not preserved: %q", got)
+	}
+}
+
+func TestFileLinkHitTestingAccountsForHorizontalScroll(t *testing.T) {
+	p := &pager{
+		width:   8,
+		height:  8,
+		leftCol: 4,
+		lines: []string{
+			"xxxx" + OSC8Start("README.md") + "README" + OSC8End,
+		},
+	}
+	if got, ok := p.fileLinkAt(1, 1); !ok || got != "README.md" {
+		t.Fatalf("fileLinkAt() = %q, %v", got, ok)
 	}
 }
 
@@ -696,6 +750,7 @@ func TestHandleMouseCopiesCodeBlockWithOSC52(t *testing.T) {
 
 func TestFileLinkAtFindsRenderedFileLink(t *testing.T) {
 	p := &pager{
+		width:  80,
 		height: 8,
 		lines: []string{
 			"before " + OSC8Start("src/main.go:42") + "main" + fileLinkIcon + OSC8End + " after",
@@ -716,6 +771,7 @@ func TestFileLinkAtFindsRenderedFileLink(t *testing.T) {
 
 func TestFileLinkAtFindsIconWrappedOntoNextLine(t *testing.T) {
 	p := &pager{
+		width:  80,
 		height: 8,
 		lines: []string{
 			OSC8Start("src/main.go") + "source",
@@ -738,6 +794,7 @@ func TestFileLinkClickOpensWithIonInBackground(t *testing.T) {
 	}
 
 	p := &pager{
+		width:  80,
 		height: 8,
 		lines:  []string{OSC8Start("README.md:12") + "README" + OSC8End},
 	}
@@ -762,6 +819,7 @@ func TestHTTPLinkClickDoesNotOpenIon(t *testing.T) {
 	}
 
 	p := &pager{
+		width:  80,
 		height: 8,
 		lines:  []string{OSC8Start("https://example.com") + "example" + OSC8End},
 	}

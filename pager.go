@@ -62,6 +62,7 @@ type pager struct {
 	codeBlocks       []renderCodeBlock
 	plainLines       []string
 	topLine          int
+	leftCol          int
 	searchQuery      string
 	searchMatches    []int
 	searchIndex      int
@@ -445,11 +446,14 @@ func (p *pager) fileLinkAt(row, col int) (string, bool) {
 	if row < 1 || row > p.viewHeight() {
 		return "", false
 	}
+	if col < p.contentLeft() || col >= p.contentLeft()+p.contentWidth() {
+		return "", false
+	}
 	line := p.topLine + row - 1
 	if line < 0 || line >= len(p.lines) {
 		return "", false
 	}
-	cell := col - p.contentLeft()
+	cell := col - p.contentLeft() + p.leftCol
 	if cell < 0 {
 		return "", false
 	}
@@ -509,7 +513,7 @@ func isFileLink(target string) bool {
 }
 
 func (p *pager) codeBlockButton(row, col int) (renderCodeBlock, bool) {
-	if col != p.contentLeft() || row < 1 || row > p.viewHeight() {
+	if p.leftCol != 0 || col != p.contentLeft() || row < 1 || row > p.viewHeight() {
 		return renderCodeBlock{}, false
 	}
 	line := p.topLine + row - 1
@@ -629,7 +633,7 @@ func (p *pager) mouseSelectionCell(row, col int) (selectionCell, bool) {
 		return selectionCell{}, false
 	}
 	width := utf8.RuneCountInString(p.plainLines[line])
-	col = clamp(col-p.contentLeft()+1, 1, width+1)
+	col = clamp(col-p.contentLeft()+p.leftCol+1, 1, width+1)
 	return selectionCell{line: line, col: col}, true
 }
 
@@ -857,6 +861,18 @@ func (p *pager) handleKey(ev keyEvent) bool {
 		p.scrollBy(1)
 	case ev.ch == 'k' || ev.ch == 16 || ev.kind == keyUp:
 		p.scrollBy(-1)
+	case ev.kind == keyLeft || ev.ch == 'h':
+		p.scrollHorizontally(-4)
+	case ev.kind == keyRight || ev.ch == 'l':
+		p.scrollHorizontally(4)
+	case ev.ch == 'H':
+		p.scrollHorizontally(-max(1, p.contentWidth()/2))
+	case ev.ch == 'L':
+		p.scrollHorizontally(max(1, p.contentWidth()/2))
+	case ev.ch == '0':
+		p.leftCol = 0
+	case ev.ch == '$':
+		p.leftCol = p.maxLeftCol()
 	case ev.ch == 'd':
 		p.scrollBy(max(1, p.viewHeight()/2))
 	case ev.ch == 'u':
@@ -891,6 +907,7 @@ func (p *pager) handleKey(ev keyEvent) bool {
 	}
 
 	p.topLine = clamp(p.topLine, 0, p.maxTopLine())
+	p.leftCol = clamp(p.leftCol, 0, p.maxLeftCol())
 	return false
 }
 
@@ -1086,6 +1103,7 @@ func (p *pager) rebuild() error {
 		p.plainLines = nil
 		p.headings = nil
 		p.topLine = 0
+		p.leftCol = 0
 		p.refreshSearchState()
 		p.refreshOutline()
 		return nil
@@ -1103,6 +1121,7 @@ func (p *pager) rebuild() error {
 	}
 
 	p.topLine = clamp(p.topLine, 0, p.maxTopLine())
+	p.leftCol = clamp(p.leftCol, 0, p.maxLeftCol())
 	p.refreshSearchAround(anchor)
 	p.refreshOutline()
 	return nil
@@ -1126,6 +1145,26 @@ func (p *pager) contentLeft() int {
 	return max(1, (p.width-p.renderWidth())/2+1)
 }
 
+func (p *pager) contentWidth() int {
+	available := max(1, p.width-p.contentLeft()+1)
+	if p.contentLeft() > 1 {
+		return min(available, p.renderWidth())
+	}
+	return available
+}
+
+func (p *pager) maxLeftCol() int {
+	maxWidth := 0
+	for _, line := range p.plainLines {
+		maxWidth = max(maxWidth, terminalWidth(line))
+	}
+	return max(0, maxWidth-p.contentWidth())
+}
+
+func (p *pager) scrollHorizontally(delta int) {
+	p.leftCol = clamp(p.leftCol+delta, 0, p.maxLeftCol())
+}
+
 func (p *pager) draw() error {
 	if p.helpActive {
 		return p.drawHelp()
@@ -1141,7 +1180,7 @@ func (p *pager) draw() error {
 		lineIdx := p.topLine + row
 		if lineIdx < len(p.lines) {
 			out.WriteString(cursorTo(row+1, contentLeft))
-			out.WriteString(p.renderLine(lineIdx))
+			out.WriteString(sliceVisible(p.renderLine(lineIdx), p.leftCol, p.contentWidth()))
 		}
 	}
 
@@ -1205,11 +1244,11 @@ func pagerHelpLines() []string {
 	return []string{
 		Bold + "md keyboard shortcuts" + Reset,
 		Bold + "Navigation" + Reset,
-		"j / ↓ / Enter / Ctrl-N     down one line",
-		"k / ↑ / Ctrl-P             up one line",
+		"j / ↓ / Enter / Ctrl-N; k / ↑ / Ctrl-P down / up",
+		"h / ←; l / → scroll horizontally; H / L half screen",
 		"d / u half screen; Space / Ctrl-V / PgDn page down",
 		"b / Alt-V / PgUp           up one screen",
-		"g / Home / Alt-< first; G / End / Alt-> last",
+		"g / G vertical first / last; 0 / $ horizontal ends",
 		"",
 		Bold + "Document" + Reset,
 		"f flow mode; Ctrl-R open outline",
@@ -1492,6 +1531,9 @@ func (p *pager) statusBarLeftParts() (string, []string) {
 	var extras []string
 	if p.flow {
 		extras = append(extras, "flow")
+	}
+	if p.leftCol > 0 {
+		extras = append(extras, fmt.Sprintf("col %d", p.leftCol+1))
 	}
 	if p.searchQuery != "" {
 		if len(p.searchMatches) == 0 {
@@ -3079,6 +3121,86 @@ func fitToWidthLeftPlainWithOffset(text string, width int) (string, int) {
 
 func visibleWidth(text string) int {
 	return terminalWidth(stripANSI(text))
+}
+
+func sliceVisible(text string, start, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	start = max(0, start)
+	end := start + width
+	visible := 0
+	started := false
+	currentSGR := ""
+	currentOSC8 := ""
+	var out strings.Builder
+
+	begin := func() {
+		if started {
+			return
+		}
+		started = true
+		if currentOSC8 != "" {
+			out.WriteString(currentOSC8)
+		}
+		if currentSGR != "" {
+			out.WriteString(currentSGR)
+		}
+	}
+
+	for i := 0; i < len(text) && visible < end; {
+		if text[i] == 0x1b {
+			seq, seqKind, next := consumeEscapeSequence(text, i)
+			if seq == "" || next <= i {
+				break
+			}
+			if seqKind == escapeSGR {
+				currentSGR = updateCurrentSGR(currentSGR, seq)
+			}
+			if strings.HasPrefix(seq, "\033]8;;") {
+				target := strings.TrimSuffix(strings.TrimPrefix(seq, "\033]8;;"), "\033\\")
+				if target == "" {
+					currentOSC8 = ""
+				} else {
+					currentOSC8 = seq
+				}
+			}
+			if started {
+				out.WriteString(seq)
+			}
+			i = next
+			continue
+		}
+
+		r, size := utf8.DecodeRuneInString(text[i:])
+		runeWidth := terminalRuneWidth(r)
+		runeEnd := visible + runeWidth
+		switch {
+		case runeEnd <= start:
+		case visible < start:
+			begin()
+			out.WriteString(strings.Repeat(" ", min(runeEnd, end)-start))
+		case visible < end && runeEnd <= end:
+			begin()
+			out.WriteRune(r)
+		case visible < end:
+			begin()
+			out.WriteString(strings.Repeat(" ", end-visible))
+		}
+		visible = runeEnd
+		i += size
+	}
+
+	if !started {
+		return ""
+	}
+	if currentSGR != "" {
+		out.WriteString(Reset)
+	}
+	if currentOSC8 != "" {
+		out.WriteString(OSC8End)
+	}
+	return out.String()
 }
 
 func truncateVisible(text string, width int) string {

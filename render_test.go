@@ -154,6 +154,17 @@ func TestMermaidFenceLanguageIsCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestWideMermaidDiagramRendersInsteadOfWidthFallback(t *testing.T) {
+	md := "```mermaid\nsequenceDiagram\n  participant A as A very long participant name\n  participant B as Another very long participant name\n  A->>B: A message that makes this diagram wide\n```\n"
+	plain := stripANSI(renderOpts(md, 30, false))
+	if strings.Contains(plain, "mermaid: sequenceDiagram") || strings.Contains(plain, "too wide to display") {
+		t.Fatalf("wide Mermaid diagram used source fallback: %q", plain)
+	}
+	if !strings.Contains(plain, "A message that makes this diagram wide") || !strings.Contains(plain, "▶") {
+		t.Fatalf("wide Mermaid diagram was not rendered: %q", plain)
+	}
+}
+
 func TestMermaidFencedCodeBlockKeepsCopyPayload(t *testing.T) {
 	source := []byte("```mermaid\ngraph TD\n  A --> B\n```\n")
 	result, err := RenderDocument(source, 80, false)

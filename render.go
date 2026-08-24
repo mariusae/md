@@ -856,11 +856,7 @@ func (r *AnsiRenderer) renderFencedCodeBlock(w util.BufWriter, source []byte, no
 }
 
 func (r *AnsiRenderer) renderMermaidBlock(w util.BufWriter, source []byte) error {
-	maxWidth := 0
-	if r.width > 4 {
-		maxWidth = r.width - 4
-	}
-	art, err := grokmermaid.Render(string(source), maxWidth)
+	art, err := grokmermaid.Render(string(source), 0)
 	if err != nil {
 		return fmt.Errorf("rendering mermaid diagram: %w", err)
 	}
