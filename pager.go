@@ -1529,9 +1529,6 @@ func (p *pager) statusBarLeft() string {
 func (p *pager) statusBarLeftParts() (string, []string) {
 	section := p.statusSectionPath()
 	var extras []string
-	if p.flow {
-		extras = append(extras, "flow")
-	}
 	if p.leftCol > 0 {
 		extras = append(extras, fmt.Sprintf("col %d", p.leftCol+1))
 	}
@@ -1592,6 +1589,9 @@ func (p *pager) statusBarRight() string {
 	}
 	if !p.sourceModTime.IsZero() {
 		parts = append(parts, humanizeRelativeTime(p.sourceModTime, timeNow()))
+	}
+	if p.flow {
+		parts = append(parts, "f")
 	}
 	parts = append(parts, fmt.Sprintf("%d%%", percent))
 	return strings.Join(parts, "  ")

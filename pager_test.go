@@ -126,8 +126,11 @@ func TestFlowModeCapsAndCentersWideContent(t *testing.T) {
 	if got := p.contentWidth(); got != 100 {
 		t.Fatalf("contentWidth() = %d, want 100", got)
 	}
-	if !strings.Contains(p.statusBarLeft(), "flow") {
-		t.Fatalf("status bar does not show flow mode: %q", p.statusBarLeft())
+	if strings.Contains(p.statusBarLeft(), "flow") {
+		t.Fatalf("left status bar still shows flow mode: %q", p.statusBarLeft())
+	}
+	if got := p.statusBarRight(); got != "f  0%" {
+		t.Fatalf("statusBarRight() = %q, want %q", got, "f  0%")
 	}
 }
 
@@ -1132,6 +1135,26 @@ func TestRenderStatusBarRightAlignsMetaAndOmitsLineNumbers(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "2m  23%") {
 		t.Fatalf("status bar right side should be right aligned with mod time and percent, got %q", got)
+	}
+}
+
+func TestRenderStatusBarShowsFlowIndicatorBeforePosition(t *testing.T) {
+	p := &pager{
+		width:   20,
+		height:  8,
+		flow:    true,
+		topLine: 2,
+		lines:   make([]string, 11),
+		cfg:     PagerConfig{Label: "test.md"},
+	}
+
+	got := stripANSI(p.renderStatusBar())
+
+	if !strings.HasSuffix(got, "f  50%") {
+		t.Fatalf("flow indicator should appear immediately before position, got %q", got)
+	}
+	if strings.Contains(got, "flow") {
+		t.Fatalf("status bar should use the compact flow indicator, got %q", got)
 	}
 }
 
