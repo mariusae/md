@@ -39,7 +39,9 @@ const (
 	queryBackgroundColor    = "\033]11;?\033\\"
 	changeFlashDuration     = 2 * time.Second
 	transientNoticeDuration = 2 * time.Second
+	doubleClickDuration     = 500 * time.Millisecond
 	codeBlockCopyIcon       = "⧉"
+	foldedHeadingMarker     = "⋯"
 )
 
 type PagerConfig struct {
@@ -80,6 +82,21 @@ type pager struct {
 	changeFlashUntil time.Time
 	helpActive       bool
 	flow             bool
+	folded           map[headingFoldKey]bool
+	lastHeadingClick headingClickState
+}
+
+type headingFoldKey struct {
+	level       int
+	text        string
+	sourceStart int
+	sourceEnd   int
+}
+
+type headingClickState struct {
+	key  headingFoldKey
+	time time.Time
+	set  bool
 }
 
 type tintTheme struct {
@@ -426,6 +443,18 @@ func (p *pager) handleMouse(ev mouseEvent) {
 	}
 
 	if !ev.pressed && !ev.isMotion() && ev.baseButton() == 0 {
+		if !p.selection.dragged {
+			if heading, ok := p.headingAt(ev.row, ev.col); ok && p.headingDoubleClicked(heading) {
+				p.pressedFileLink = ""
+				p.selection = selectionState{}
+				p.toggleHeadingFold(heading)
+				return
+			} else if !ok {
+				p.lastHeadingClick = headingClickState{}
+			}
+		} else {
+			p.lastHeadingClick = headingClickState{}
+		}
 		pressed := p.pressedFileLink
 		p.pressedFileLink = ""
 		if target, ok := p.fileLinkAt(ev.row, ev.col); ok && target == pressed && !p.selection.dragged {
@@ -440,6 +469,71 @@ func (p *pager) handleMouse(ev mouseEvent) {
 	}
 
 	p.handleSelectionMouse(ev)
+}
+
+func headingKey(heading Heading) headingFoldKey {
+	return headingFoldKey{
+		level:       heading.Level,
+		text:        heading.Text,
+		sourceStart: heading.sourceStart,
+		sourceEnd:   heading.sourceEnd,
+	}
+}
+
+func (p *pager) headingAt(row, col int) (Heading, bool) {
+	if row < 1 || row > p.viewHeight() || col < p.contentLeft() || col >= p.contentLeft()+p.contentWidth() {
+		return Heading{}, false
+	}
+	line := p.topLine + row - 1
+	if line < 0 || line >= len(p.plainLines) {
+		return Heading{}, false
+	}
+	cell := col - p.contentLeft() + p.leftCol
+	if cell < 0 || cell >= terminalWidth(p.plainLines[line]) {
+		return Heading{}, false
+	}
+	for _, heading := range p.headings {
+		if line >= heading.Line && line <= heading.endLine {
+			return heading, true
+		}
+	}
+	return Heading{}, false
+}
+
+func (p *pager) headingDoubleClicked(heading Heading) bool {
+	now := timeNow()
+	key := headingKey(heading)
+	doubleClicked := p.lastHeadingClick.set &&
+		p.lastHeadingClick.key == key &&
+		!now.Before(p.lastHeadingClick.time) &&
+		now.Sub(p.lastHeadingClick.time) <= doubleClickDuration
+	if doubleClicked {
+		p.lastHeadingClick = headingClickState{}
+		return true
+	}
+	p.lastHeadingClick = headingClickState{key: key, time: now, set: true}
+	return false
+}
+
+func (p *pager) toggleHeadingFold(heading Heading) {
+	key := headingKey(heading)
+	if p.folded == nil {
+		p.folded = make(map[headingFoldKey]bool)
+	}
+	wasFolded := p.folded[key]
+	if wasFolded {
+		delete(p.folded, key)
+	} else {
+		p.folded[key] = true
+	}
+	if err := p.rebuild(); err != nil {
+		if wasFolded {
+			p.folded[key] = true
+		} else {
+			delete(p.folded, key)
+		}
+		p.setNotice(err.Error(), true)
+	}
 }
 
 func (p *pager) fileLinkAt(row, col int) (string, bool) {
@@ -1094,7 +1188,6 @@ func (p *pager) rebuild() error {
 		anchor = p.searchMatches[p.searchIndex]
 	}
 
-	p.headings = append([]Heading(nil), result.Headings...)
 	text := strings.TrimSuffix(result.Output, "\n")
 	if text == "" {
 		p.lines = nil
@@ -1109,12 +1202,7 @@ func (p *pager) rebuild() error {
 		return nil
 	}
 
-	p.lines = strings.Split(text, "\n")
-	p.lineMappings = append([]renderLineMapping(nil), result.lineMappings...)
-	p.codeBlocks = append([]renderCodeBlock(nil), result.codeBlocks...)
-	if len(p.lineMappings) > len(p.lines) {
-		p.lineMappings = p.lineMappings[:len(p.lines)]
-	}
+	p.applyFolds(result, strings.Split(text, "\n"))
 	p.plainLines = make([]string, len(p.lines))
 	for i, line := range p.lines {
 		p.plainLines[i] = stripANSI(line)
@@ -1125,6 +1213,78 @@ func (p *pager) rebuild() error {
 	p.refreshSearchAround(anchor)
 	p.refreshOutline()
 	return nil
+}
+
+func (p *pager) applyFolds(result RenderResult, rawLines []string) {
+	validKeys := make(map[headingFoldKey]bool, len(result.Headings))
+	for _, heading := range result.Headings {
+		validKeys[headingKey(heading)] = true
+	}
+	for key := range p.folded {
+		if !validKeys[key] {
+			delete(p.folded, key)
+		}
+	}
+
+	hidden := make([]bool, len(rawLines))
+	for i, heading := range result.Headings {
+		if !p.folded[headingKey(heading)] {
+			continue
+		}
+		end := len(rawLines)
+		for j := i + 1; j < len(result.Headings); j++ {
+			if result.Headings[j].Level <= heading.Level {
+				end = result.Headings[j].Line
+				break
+			}
+		}
+		for line := clamp(heading.endLine+1, 0, len(rawLines)); line < clamp(end, 0, len(rawLines)); line++ {
+			hidden[line] = true
+		}
+	}
+
+	lineMap := make([]int, len(rawLines))
+	for i := range lineMap {
+		lineMap[i] = -1
+	}
+	p.lines = make([]string, 0, len(rawLines))
+	p.lineMappings = make([]renderLineMapping, 0, min(len(result.lineMappings), len(rawLines)))
+	for oldLine, line := range rawLines {
+		if hidden[oldLine] {
+			continue
+		}
+		lineMap[oldLine] = len(p.lines)
+		p.lines = append(p.lines, line)
+		if oldLine < len(result.lineMappings) {
+			p.lineMappings = append(p.lineMappings, result.lineMappings[oldLine])
+		} else {
+			p.lineMappings = append(p.lineMappings, renderLineMapping{})
+		}
+	}
+
+	p.headings = make([]Heading, 0, len(result.Headings))
+	for _, heading := range result.Headings {
+		if heading.Line < 0 || heading.Line >= len(lineMap) || lineMap[heading.Line] < 0 {
+			continue
+		}
+		heading.Line = lineMap[heading.Line]
+		endLine := clamp(heading.endLine, 0, len(lineMap)-1)
+		if lineMap[endLine] >= 0 {
+			heading.endLine = lineMap[endLine]
+		} else {
+			heading.endLine = heading.Line
+		}
+		p.headings = append(p.headings, heading)
+	}
+
+	p.codeBlocks = make([]renderCodeBlock, 0, len(result.codeBlocks))
+	for _, block := range result.codeBlocks {
+		if block.line < 0 || block.line >= len(lineMap) || lineMap[block.line] < 0 {
+			continue
+		}
+		block.line = lineMap[block.line]
+		p.codeBlocks = append(p.codeBlocks, block)
+	}
 }
 
 func (p *pager) renderWidth() int {
@@ -1251,7 +1411,7 @@ func pagerHelpLines() []string {
 		"g / G vertical first / last; 0 / $ horizontal ends",
 		"",
 		Bold + "Document" + Reset,
-		"f flow mode; Ctrl-R open outline",
+		"f flow mode; Ctrl-R open outline; double-click heading folds",
 		"r / Ctrl-L reload; ? help",
 		"/                          search; n / N next / previous",
 		"q / Ctrl-C                 quit",
@@ -1480,6 +1640,14 @@ func (p *pager) renderLine(lineIdx int) string {
 			break
 		}
 	}
+	if heading, ok := p.foldedHeadingAtLine(lineIdx); ok {
+		line = strings.ReplaceAll(line, Bold, "")
+		line = Dim + strings.ReplaceAll(line, Reset, Reset+Dim)
+		if lineIdx == heading.endLine {
+			line += " " + foldedHeadingMarker
+		}
+		line += Reset
+	}
 	if p.searchQuery != "" {
 		line = highlightSearchMatches(line, p.plainLines[lineIdx], p.searchQuery, p.highlightStart())
 	}
@@ -1492,6 +1660,15 @@ func (p *pager) renderLine(lineIdx int) string {
 		line = highlightVisibleRanges(line, ranges, p.highlightStart())
 	}
 	return line
+}
+
+func (p *pager) foldedHeadingAtLine(lineIdx int) (Heading, bool) {
+	for _, heading := range p.headings {
+		if p.folded[headingKey(heading)] && lineIdx >= heading.Line && lineIdx <= heading.endLine {
+			return heading, true
+		}
+	}
+	return Heading{}, false
 }
 
 func (p *pager) clearExpiredChangeFlash(now time.Time) {

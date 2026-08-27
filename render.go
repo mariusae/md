@@ -22,6 +22,10 @@ type Heading struct {
 	Level int
 	Text  string
 	Line  int
+
+	endLine     int
+	sourceStart int
+	sourceEnd   int
 }
 
 type RenderResult struct {
@@ -107,6 +111,9 @@ func RenderDocumentWithStyle(source []byte, width int, osc8 bool, style RenderSt
 func offsetRenderResult(result *RenderResult, sourceOffset, lineOffset int) {
 	for i := range result.Headings {
 		result.Headings[i].Line += lineOffset
+		result.Headings[i].endLine += lineOffset
+		result.Headings[i].sourceStart += sourceOffset
+		result.Headings[i].sourceEnd += sourceOffset
 	}
 	for i := range result.codeBlocks {
 		result.codeBlocks[i].line += lineOffset
@@ -784,16 +791,21 @@ func (r *AnsiRenderer) renderDocument(w util.BufWriter, source []byte, node ast.
 func (r *AnsiRenderer) renderHeading(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {
 		n := node.(*ast.Heading)
-		r.pushSourceSpan(blockSourceSpan(source, node))
+		span := blockSourceSpan(source, node)
+		r.pushSourceSpan(span)
 		r.headings = append(r.headings, Heading{
-			Level: n.Level,
-			Text:  strings.TrimSpace(extractText(node, source)),
-			Line:  r.line,
+			Level:       n.Level,
+			Text:        strings.TrimSpace(extractText(node, source)),
+			Line:        r.line,
+			endLine:     r.line,
+			sourceStart: span.start,
+			sourceEnd:   span.end,
 		})
 		r.pushStyle(style{bold: true}, w)
 	} else {
 		r.popStyle(w)
 		r.popSourceSpan()
+		r.headings[len(r.headings)-1].endLine = r.line
 		r.writeNewline(w)
 		r.writeNewline(w)
 	}

@@ -667,6 +667,127 @@ func TestHandleMouseScrollsOutlineSelection(t *testing.T) {
 	}
 }
 
+func TestDoubleClickHeadingFoldsSectionUntilPeer(t *testing.T) {
+	original := timeNow
+	defer func() { timeNow = original }()
+	now := time.Date(2026, time.August, 26, 12, 0, 0, 0, time.UTC)
+	timeNow = func() time.Time { return now }
+
+	p := &pager{
+		source: []byte("# One\n\nintro\n\n## Child\n\nchild body\n\n# Two\n\ntail\n"),
+		width:  80,
+		height: 24,
+	}
+	if err := p.rebuild(); err != nil {
+		t.Fatal(err)
+	}
+
+	click := func(row, col int) {
+		p.handleMouse(mouseEvent{button: 0, row: row, col: col, pressed: true})
+		p.handleMouse(mouseEvent{button: 0, row: row, col: col, pressed: false})
+	}
+	click(1, 1)
+	now = now.Add(100 * time.Millisecond)
+	click(1, 1)
+
+	folded := strings.Join(p.plainLines, "\n")
+	if strings.Contains(folded, "intro") || strings.Contains(folded, "Child") || strings.Contains(folded, "child body") {
+		t.Fatalf("folded section still contains its body or child heading:\n%s", folded)
+	}
+	if !strings.Contains(folded, "One") || !strings.Contains(folded, "Two") || !strings.Contains(folded, "tail") {
+		t.Fatalf("folding removed the heading or following peer section:\n%s", folded)
+	}
+	renderedHeading := p.renderLine(p.headings[0].Line)
+	if !strings.HasPrefix(renderedHeading, Dim) {
+		t.Fatalf("folded heading is not dimmed: %q", renderedHeading)
+	}
+	if strings.Contains(renderedHeading, Bold) {
+		t.Fatalf("folded heading retained bright bold styling: %q", renderedHeading)
+	}
+	if got := stripANSI(renderedHeading); got != "One "+foldedHeadingMarker {
+		t.Fatalf("folded heading = %q, want %q", got, "One "+foldedHeadingMarker)
+	}
+
+	now = now.Add(time.Second)
+	click(1, 1)
+	now = now.Add(100 * time.Millisecond)
+	click(1, 1)
+
+	expanded := strings.Join(p.plainLines, "\n")
+	for _, want := range []string{"intro", "Child", "child body", "Two", "tail"} {
+		if !strings.Contains(expanded, want) {
+			t.Fatalf("expanded document does not contain %q:\n%s", want, expanded)
+		}
+	}
+}
+
+func TestDoubleClickWrappedHeadingLineFoldsSection(t *testing.T) {
+	original := timeNow
+	defer func() { timeNow = original }()
+	now := time.Date(2026, time.August, 26, 12, 0, 0, 0, time.UTC)
+	timeNow = func() time.Time { return now }
+
+	p := &pager{
+		source: []byte("# Alpha beta gamma delta\n\nbody\n\n# Next\n\nnext body\n"),
+		width:  10,
+		height: 24,
+	}
+	if err := p.rebuild(); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.headings) < 2 || p.headings[0].endLine <= p.headings[0].Line {
+		t.Fatalf("expected first heading to wrap: %#v", p.headings)
+	}
+
+	row := p.headings[0].endLine + 1
+	p.handleMouse(mouseEvent{button: 0, row: row, col: 1, pressed: true})
+	p.handleMouse(mouseEvent{button: 0, row: row, col: 1, pressed: false})
+	now = now.Add(100 * time.Millisecond)
+	p.handleMouse(mouseEvent{button: 0, row: row, col: 1, pressed: true})
+	p.handleMouse(mouseEvent{button: 0, row: row, col: 1, pressed: false})
+
+	got := strings.Join(p.plainLines, "\n")
+	if !strings.Contains(got, "next body") {
+		t.Fatalf("folding a wrapped heading hid the peer section:\n%s", got)
+	}
+	if strings.Contains(got, "\nbody\n") {
+		t.Fatalf("folding a wrapped heading left its body visible:\n%s", got)
+	}
+	for line := p.headings[0].Line; line <= p.headings[0].endLine; line++ {
+		rendered := p.renderLine(line)
+		if !strings.HasPrefix(rendered, Dim) {
+			t.Fatalf("wrapped folded heading line %d is not dimmed: %q", line, rendered)
+		}
+		if hasMarker := strings.HasSuffix(stripANSI(rendered), " "+foldedHeadingMarker); hasMarker != (line == p.headings[0].endLine) {
+			t.Fatalf("wrapped heading marker placement on line %d: %q", line, stripANSI(rendered))
+		}
+	}
+}
+
+func TestFoldedSubheadingStopsAtSameOrHigherLevel(t *testing.T) {
+	p := &pager{
+		source: []byte("# Root\n\n## Fold me\n\ninside\n\n### Nested\n\ndeep\n\n## Peer\n\npeer body\n\n# Next root\n\nroot body\n"),
+		width:  80,
+		height: 24,
+	}
+	if err := p.rebuild(); err != nil {
+		t.Fatal(err)
+	}
+	p.toggleHeadingFold(p.headings[1])
+
+	got := strings.Join(p.plainLines, "\n")
+	for _, hidden := range []string{"inside", "Nested", "deep"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("folded subsection still contains %q:\n%s", hidden, got)
+		}
+	}
+	for _, visible := range []string{"Fold me", "Peer", "peer body", "Next root", "root body"} {
+		if !strings.Contains(got, visible) {
+			t.Fatalf("folded subsection removed %q:\n%s", visible, got)
+		}
+	}
+}
+
 func TestRenderLineAddsCopyIconToCodeBlockLeftGutter(t *testing.T) {
 	bg := "\033[48;2;1;2;3m"
 	p := &pager{
