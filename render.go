@@ -52,7 +52,8 @@ func (s sourceSpan) valid() bool {
 }
 
 type renderLineMapping struct {
-	spans []sourceSpan
+	spans              []sourceSpan
+	plainTextSelection bool
 }
 
 // Render converts markdown source to ANSI-formatted text written to w.
@@ -281,6 +282,7 @@ type AnsiRenderer struct {
 	lineMappings    []renderLineMapping
 	spanStack       []sourceSpan
 	codeBlocks      []renderCodeBlock
+	plainSelection  bool
 }
 
 func NewAnsiRenderer(width int, osc8 bool, style RenderStyle) *AnsiRenderer {
@@ -478,6 +480,9 @@ func (r *AnsiRenderer) recordOutput(s string, spans []sourceSpan) {
 	spanIdx := 0
 	defaultSpan := r.currentSourceSpan()
 	for i := 0; i < len(s); {
+		if r.plainSelection {
+			r.lineMappings[len(r.lineMappings)-1].plainTextSelection = true
+		}
 		if s[i] == 0x1b {
 			seq, _, next := consumeEscapeSequence(s, i)
 			if seq == "" || next <= i {
@@ -834,7 +839,10 @@ func (r *AnsiRenderer) renderCodeBlock(w util.BufWriter, source []byte, node ast
 	if entering {
 		r.recordCodeBlock(source, node)
 		r.pushSourceSpan(blockSourceSpan(source, node))
+		previousPlainSelection := r.plainSelection
+		r.plainSelection = true
 		r.renderCodeLines(w, source, node)
+		r.plainSelection = previousPlainSelection
 		r.popSourceSpan()
 		if node.Parent() == nil || node.Parent().Kind() != ast.KindListItem {
 			r.writeNewline(w)
@@ -849,14 +857,19 @@ func (r *AnsiRenderer) renderFencedCodeBlock(w util.BufWriter, source []byte, no
 	if entering {
 		r.recordCodeBlock(source, node)
 		r.pushSourceSpan(blockSourceSpan(source, node))
+		previousPlainSelection := r.plainSelection
+		r.plainSelection = true
 		fenced := node.(*ast.FencedCodeBlock)
 		if strings.EqualFold(strings.TrimSpace(string(fenced.Language(source))), "mermaid") {
 			if err := r.renderMermaidBlock(w, codeBlockText(source, node)); err != nil {
+				r.plainSelection = previousPlainSelection
+				r.popSourceSpan()
 				return ast.WalkStop, err
 			}
 		} else {
 			r.renderCodeLines(w, source, node)
 		}
+		r.plainSelection = previousPlainSelection
 		r.popSourceSpan()
 		if node.Parent() == nil || node.Parent().Kind() != ast.KindListItem {
 			r.writeNewline(w)

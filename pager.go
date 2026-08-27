@@ -801,6 +801,9 @@ func (p *pager) selectionMarkdown() []byte {
 	if !ok {
 		return nil
 	}
+	if p.selectionIncludesPlainTextLine(start, end) {
+		return []byte(p.selectionPlainText(start, end))
+	}
 
 	var spans []sourceSpan
 	for lineIdx := start.line; lineIdx <= end.line; lineIdx++ {
@@ -838,6 +841,15 @@ func (p *pager) selectionMarkdown() []byte {
 		prevEnd = span.end
 	}
 	return out
+}
+
+func (p *pager) selectionIncludesPlainTextLine(start, end selectionPoint) bool {
+	for lineIdx := start.line; lineIdx <= end.line; lineIdx++ {
+		if lineIdx >= 0 && lineIdx < len(p.lineMappings) && p.lineMappings[lineIdx].plainTextSelection {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *pager) selectionPlainText(start, end selectionPoint) string {

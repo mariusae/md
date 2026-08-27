@@ -1141,6 +1141,31 @@ func TestSelectionMarkdownFallsBackToPlainText(t *testing.T) {
 	}
 }
 
+func TestSelectionMarkdownCopiesOnlySelectedCodeText(t *testing.T) {
+	source := []byte("```go\nalpha beta\n```\n")
+	result, err := RenderDocumentWithStyle(source, 80, true, RenderStyle{})
+	if err != nil {
+		t.Fatalf("RenderDocumentWithStyle() error = %v", err)
+	}
+
+	text := strings.TrimSuffix(result.Output, "\n")
+	p := &pager{
+		source:       source,
+		lines:        strings.Split(text, "\n"),
+		lineMappings: result.lineMappings,
+		plainLines:   strings.Split(stripANSI(text), "\n"),
+		selection: selectionState{
+			active:  true,
+			anchor:  selectionCell{line: 0, col: 11},
+			current: selectionCell{line: 0, col: 14},
+		},
+	}
+
+	if got := string(p.selectionMarkdown()); got != "beta" {
+		t.Fatalf("selectionMarkdown() = %q, want %q", got, "beta")
+	}
+}
+
 func TestCurrentHeadingPath(t *testing.T) {
 	p := &pager{
 		topLine: 7,
