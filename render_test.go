@@ -357,6 +357,18 @@ func TestFileLinkOSC8IncludesClickableFileIcon(t *testing.T) {
 	}
 }
 
+func TestFileLinkOSC8AfterListParagraphDoesNotUnderlineIndent(t *testing.T) {
+	out := renderOpts("1. Description.\n\n   [source](src/main.go:42)\n", 80, true)
+	line := strings.Split(out, "\n")[2]
+	prefix := "     "
+	if !strings.HasPrefix(line, prefix+OSC8Start("src/main.go:42")+Underline) {
+		t.Fatalf("link styling should start after indentation: %q", line)
+	}
+	if strings.Contains(line[:len(prefix)], Underline) || strings.Contains(line[:len(prefix)], OSC8Start("src/main.go:42")) {
+		t.Fatalf("indentation should not be underlined or clickable: %q", line)
+	}
+}
+
 func TestWebLinkOSC8DoesNotIncludeFileIcon(t *testing.T) {
 	out := renderOpts("[website](https://example.com)\n", 80, true)
 	if strings.Contains(out, strings.TrimSpace(fileLinkIcon)) {

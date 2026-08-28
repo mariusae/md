@@ -1187,6 +1187,12 @@ func (r *AnsiRenderer) renderMark(w util.BufWriter, source []byte, node ast.Node
 func (r *AnsiRenderer) renderLink(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	n := node.(*ast.Link)
 	if entering {
+		// A link can start a continuation paragraph in a list item. Emit that
+		// paragraph's indentation before enabling OSC-8/underline styling so the
+		// leading spaces are neither clickable nor underlined.
+		if r.col == 0 && r.indent > 0 {
+			r.writeIndent(w)
+		}
 		r.pushSourceSpan(inlineSourceSpan(source, node))
 		if r.osc8 {
 			r.writeString(w, OSC8Start(string(n.Destination)))
@@ -1220,6 +1226,9 @@ func (r *AnsiRenderer) renderAutoLink(w util.BufWriter, source []byte, node ast.
 	if entering {
 		n := node.(*ast.AutoLink)
 		url := string(n.URL(source))
+		if r.col == 0 && r.indent > 0 {
+			r.writeIndent(w)
+		}
 		r.pushSourceSpan(inlineSourceSpan(source, node))
 		if r.osc8 {
 			r.writeString(w, OSC8Start(url))
