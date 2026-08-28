@@ -255,6 +255,38 @@ func TestReloadFlashesChangedRenderedText(t *testing.T) {
 	}
 }
 
+func TestInitialReloadStartsAtContentBeforeFirstHeading(t *testing.T) {
+	source := []byte("---\ntitle: Example\n---\nintroductory content\n\n# Header\n\nbody\n\nmore\n")
+	p := &pager{
+		cfg:    PagerConfig{InitialSource: source},
+		width:  80,
+		height: 4,
+	}
+
+	if err := p.reload(true); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.plainLines[p.topLine]; got != "introductory content" {
+		t.Fatalf("initial line = %q, want introductory content", got)
+	}
+}
+
+func TestInitialReloadWithoutFrontMatterStartsAtFirstContent(t *testing.T) {
+	source := []byte("some content here\n\n# Header\n\nbody\n\nmore\n")
+	p := &pager{
+		cfg:    PagerConfig{InitialSource: source},
+		width:  80,
+		height: 4,
+	}
+
+	if err := p.reload(true); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.plainLines[p.topLine]; got != "some content here" {
+		t.Fatalf("initial line = %q, want some content here", got)
+	}
+}
+
 func assertMatchRange(t *testing.T, got []matchRange, want matchRange) {
 	t.Helper()
 	if len(got) != 1 || got[0] != want {
@@ -457,6 +489,9 @@ func TestOutlineRefreshSelectsCurrentHeading(t *testing.T) {
 	if p.outline.selected != 1 {
 		t.Fatalf("outline.selected = %d, want 1", p.outline.selected)
 	}
+	if p.topLine != 5 {
+		t.Fatalf("topLine = %d, want 5", p.topLine)
+	}
 }
 
 func TestOutlineFilterNarrowsHeadings(t *testing.T) {
@@ -518,6 +553,7 @@ func TestInsertOutlineRuneNavigatesToFilteredSelection(t *testing.T) {
 		},
 		lines: make([]string, 20),
 		outline: outlineState{
+			active:   true,
 			filter:   "",
 			cursor:   0,
 			selected: 0,

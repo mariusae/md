@@ -1143,7 +1143,7 @@ func (p *pager) reload(initial bool) error {
 	changed := !initial && !bytes.Equal(oldSource, source)
 	p.source = source
 	p.sourceModTime = modTime
-	if err := p.rebuild(); err != nil {
+	if err := p.rebuildWithInitialPosition(initial); err != nil {
 		if initial {
 			return err
 		}
@@ -1190,9 +1190,16 @@ func (p *pager) loadSource() ([]byte, time.Time, error) {
 }
 
 func (p *pager) rebuild() error {
+	return p.rebuildWithInitialPosition(false)
+}
+
+func (p *pager) rebuildWithInitialPosition(initial bool) error {
 	result, err := RenderDocumentWithStyle(p.source, p.renderWidth(), true, p.theme.renderStyle())
 	if err != nil {
 		return err
+	}
+	if initial {
+		p.topLine = result.contentLine
 	}
 
 	anchor := p.topLine
@@ -1898,17 +1905,16 @@ func (p *pager) refreshOutline() {
 	}
 
 	current := p.currentHeadingIndex()
-	if containsInt(p.outline.filtered, p.outline.selected) {
-		p.syncOutlineTopLine()
-		return
+	if !containsInt(p.outline.filtered, p.outline.selected) {
+		if containsInt(p.outline.filtered, current) {
+			p.outline.selected = current
+		} else {
+			p.outline.selected = p.outline.filtered[0]
+		}
 	}
-	if containsInt(p.outline.filtered, current) {
-		p.outline.selected = current
+	if p.outline.active {
 		p.syncOutlineTopLine()
-		return
 	}
-	p.outline.selected = p.outline.filtered[0]
-	p.syncOutlineTopLine()
 }
 
 func (p *pager) matchingOutlineIndices(filter string, dst []int) []int {

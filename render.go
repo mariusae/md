@@ -33,6 +33,7 @@ type RenderResult struct {
 	Headings     []Heading
 	lineMappings []renderLineMapping
 	codeBlocks   []renderCodeBlock
+	contentLine  int
 }
 
 type renderCodeBlock struct {
@@ -105,6 +106,7 @@ func RenderDocumentWithStyle(source []byte, width int, osc8 bool, style RenderSt
 		offsetRenderResult(&result, 0, lineOffset)
 		result.Output = frontOutput + result.Output
 		result.lineMappings = append(frontMappings, result.lineMappings...)
+		result.contentLine = lineOffset
 	}
 	return result, nil
 }
